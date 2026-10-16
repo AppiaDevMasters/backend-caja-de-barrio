@@ -3,6 +3,7 @@ package opclient_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/opclient"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/opkeys"
@@ -1226,6 +1228,729 @@ func TestRotateAccessToken(t *testing.T) {
 	want := opclient.AccessToken{Value: "PDP_rotado_1", ManageURL: "https://auth.example/token/abc-2", ExpiresIn: 600}
 	if got != want {
 		t.Errorf("RotateAccessToken() = %+v, want %+v", got, want)
+	}
+}
+
+// outgoingPaymentResponse is what the resource server answers to a created
+// outgoing payment, with the fields the SDK decodes.
+func outgoingPaymentResponse(id, walletAddress, quoteID string) string {
+	return fmt.Sprintf(`{"id":%q,"walletAddress":%q,"quoteId":%q,"debitAmount":{"assetCode":"COP","assetScale":2,"value":"20300000"},"receiveAmount":{"assetCode":"COP","assetScale":2,"value":"20300000"},"sentAmount":{"assetCode":"COP","assetScale":2,"value":"0"},"failed":false,"createdAt":"2026-10-17T15:10:00Z"}`,
+		id, walletAddress, quoteID)
+}
+
+// The last half of the withdrawal (contract 8.7 step 2): the two outgoing
+// payments that pay the two quotes, from the client wallet, under the approved
+// token of the interactive grant. The token rotates after each use, so the
+// second payment carries the rotated value and the caller stores the token as
+// it ended, because the values that paid are dead.
+func TestCreateOutgoingPayments(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	var mu sync.Mutex
+	var payments []map[string]any
+	var paymentAuthorizations []string
+	var rotationAuthorizations []string
+	var rotations int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/outgoing-payments"):
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("the outgoing payment body is not JSON: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			index := len(payments)
+			payments = append(payments, body)
+			paymentAuthorizations = append(paymentAuthorizations, r.Header.Get("Authorization"))
+			mu.Unlock()
+
+			quoteID, _ := body["quoteId"].(string)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, outgoingPaymentResponse(
+				"https://"+r.Host+strings.TrimSuffix(r.URL.Path, "/outgoing-payments")+"/outgoing-payments/op-"+fmt.Sprint(index+1),
+				"https://"+r.Host+strings.TrimSuffix(r.URL.Path, "/outgoing-payments"),
+				quoteID,
+			))
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/token/"):
+			mu.Lock()
+			rotations++
+			rotation := rotations
+			rotationAuthorizations = append(rotationAuthorizations, r.Header.Get("Authorization"))
+			mu.Unlock()
+
+			value := "PDP_rotado_1"
+			manage := "https://" + r.Host + "/token/abc-2"
+			if rotation == 2 {
+				value = "PDP_rotado_2"
+				manage = "https://" + r.Host + "/token/abc-3"
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"access_token":{"access":[],"value":%q,"manage":%q,"expires_in":600}}`, value, manage)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	clientWallet := httpsURL(srv) + "/laura-cajadebarrio"
+	storeQuote := clientWallet + "/quotes/q-tienda"
+	platformQuote := clientWallet + "/quotes/q-plataforma"
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(srv) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	got, err := client.CreateOutgoingPayments(context.Background(), opclient.CreateOutgoingPaymentsParams{
+		ClientWalletAddress: clientWallet,
+		StoreQuoteURL:       storeQuote,
+		PlatformQuoteURL:    platformQuote,
+		Token:               opclient.AccessToken{Value: "PDP_aprobado_1", ManageURL: httpsURL(srv) + "/token/abc-1", ExpiresIn: 600},
+	})
+	if err != nil {
+		t.Fatalf("CreateOutgoingPayments() returned an error: %v", err)
+	}
+
+	// Two payments, in the order the contract runs them: the store first, then
+	// the platform.
+	if len(payments) != 2 {
+		t.Fatalf("the resource server received %d outgoing payments, want 2", len(payments))
+	}
+
+	// The store payment carries exactly the wallet address and the quote id of
+	// the store quote: the SDK's own TODO admits the quote id path is
+	// under-tested, so the payload is asserted key by key.
+	if len(payments[0]) != 2 {
+		t.Errorf("store outgoing payment payload has %d keys (%v), want exactly walletAddress and quoteId", len(payments[0]), payments[0])
+	}
+	if payments[0]["walletAddress"] != clientWallet {
+		t.Errorf("store outgoing payment walletAddress = %v, want %s", payments[0]["walletAddress"], clientWallet)
+	}
+	if payments[0]["quoteId"] != storeQuote {
+		t.Errorf("store outgoing payment quoteId = %v, want %s", payments[0]["quoteId"], storeQuote)
+	}
+	if paymentAuthorizations[0] != "GNAP PDP_aprobado_1" {
+		t.Errorf("store outgoing payment authorization = %q, want the approved grant token", paymentAuthorizations[0])
+	}
+
+	// The rotation of the token that just paid the store goes to the management
+	// URL the grant returned.
+	if len(rotationAuthorizations) != 2 {
+		t.Fatalf("the auth server received %d rotations, want one after each payment", len(rotationAuthorizations))
+	}
+	if rotationAuthorizations[0] != "GNAP PDP_aprobado_1" {
+		t.Errorf("first rotation authorization = %q, want the token that just paid the store", rotationAuthorizations[0])
+	}
+
+	// The platform payment carries the rotated token, not the original one.
+	if len(payments[1]) != 2 {
+		t.Errorf("platform outgoing payment payload has %d keys (%v), want exactly walletAddress and quoteId", len(payments[1]), payments[1])
+	}
+	if payments[1]["walletAddress"] != clientWallet {
+		t.Errorf("platform outgoing payment walletAddress = %v, want %s", payments[1]["walletAddress"], clientWallet)
+	}
+	if payments[1]["quoteId"] != platformQuote {
+		t.Errorf("platform outgoing payment quoteId = %v, want %s", payments[1]["quoteId"], platformQuote)
+	}
+	if paymentAuthorizations[1] != "GNAP PDP_rotado_1" {
+		t.Errorf("platform outgoing payment authorization = %q, want the token returned by the rotation", paymentAuthorizations[1])
+	}
+	if rotationAuthorizations[1] != "GNAP PDP_rotado_1" {
+		t.Errorf("second rotation authorization = %q, want the token that just paid the platform", rotationAuthorizations[1])
+	}
+
+	// Both payments are identified, and the token handed back is the one the
+	// second rotation produced: every value that paid is dead.
+	wantStore := opclient.OutgoingPayment{
+		URL:           clientWallet + "/outgoing-payments/op-1",
+		DebitAmount:   opclient.Amount{AssetCode: "COP", AssetScale: 2, Value: "20300000"},
+		ReceiveAmount: opclient.Amount{AssetCode: "COP", AssetScale: 2, Value: "20300000"},
+	}
+	if got.Store != wantStore {
+		t.Errorf("Store = %+v, want %+v", got.Store, wantStore)
+	}
+	wantPlatform := opclient.OutgoingPayment{
+		URL:           clientWallet + "/outgoing-payments/op-2",
+		DebitAmount:   opclient.Amount{AssetCode: "COP", AssetScale: 2, Value: "20300000"},
+		ReceiveAmount: opclient.Amount{AssetCode: "COP", AssetScale: 2, Value: "20300000"},
+	}
+	if got.Platform != wantPlatform {
+		t.Errorf("Platform = %+v, want %+v", got.Platform, wantPlatform)
+	}
+	wantToken := opclient.AccessToken{Value: "PDP_rotado_2", ManageURL: httpsURL(srv) + "/token/abc-3", ExpiresIn: 600}
+	if got.Token != wantToken {
+		t.Errorf("Token = %+v, want the token after the last rotation (%+v)", got.Token, wantToken)
+	}
+}
+
+// A payment the resource server reports as failed is an error, not a success:
+// the money did not move, so the withdrawal cannot go on to the second payment,
+// let alone report the withdrawal as paid.
+func TestCreateOutgoingPaymentsReportsAFailedPaymentAsAnError(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	var mu sync.Mutex
+	var payments, rotations int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/outgoing-payments"):
+			mu.Lock()
+			payments++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":"https://rafiki-backend:3000/laura-cajadebarrio/outgoing-payments/op-1","walletAddress":"https://rafiki-backend:3000/laura-cajadebarrio","quoteId":"https://rafiki-backend:3000/laura-cajadebarrio/quotes/q-tienda","debitAmount":{"assetCode":"COP","assetScale":2,"value":"20300000"},"receiveAmount":{"assetCode":"COP","assetScale":2,"value":"20300000"},"sentAmount":{"assetCode":"COP","assetScale":2,"value":"0"},"failed":true,"createdAt":"2026-10-17T15:10:00Z"}`)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/token/"):
+			mu.Lock()
+			rotations++
+			mu.Unlock()
+			fmt.Fprint(w, `{"access_token":{"access":[],"value":"PDP_rotado_1","manage":"https://x/token/abc-2","expires_in":600}}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(srv) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	_, err = client.CreateOutgoingPayments(context.Background(), opclient.CreateOutgoingPaymentsParams{
+		ClientWalletAddress: httpsURL(srv) + "/laura-cajadebarrio",
+		StoreQuoteURL:       httpsURL(srv) + "/laura-cajadebarrio/quotes/q-tienda",
+		PlatformQuoteURL:    httpsURL(srv) + "/laura-cajadebarrio/quotes/q-plataforma",
+		Token:               opclient.AccessToken{Value: "PDP_aprobado_1", ManageURL: httpsURL(srv) + "/token/abc-1", ExpiresIn: 600},
+	})
+	if err == nil {
+		t.Fatal("CreateOutgoingPayments() accepted a payment the server reports as failed, want an error")
+	}
+	if !strings.Contains(err.Error(), "failed") {
+		t.Errorf("error %q does not say the payment failed", err)
+	}
+
+	mu.Lock()
+	created, rotated := payments, rotations
+	mu.Unlock()
+	if created != 1 {
+		t.Errorf("the resource server received %d outgoing payments, want 1: a failed payment stops the flow", created)
+	}
+	if rotated != 0 {
+		t.Errorf("the auth server received %d rotations after a failed payment, want 0", rotated)
+	}
+}
+
+// Every parameter of the payment half is validated before any network call
+// happens, and the error names the parameter that is wrong.
+func TestCreateOutgoingPaymentsRejectsParamsItCannotUse(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	// The stub fails the test if it is ever reached: validation happens before
+	// the network, not at the first response.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("a request went out before the parameters were validated: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(srv) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	wallet := httpsURL(srv) + "/laura-cajadebarrio"
+	token := opclient.AccessToken{Value: "PDP_aprobado_1", ManageURL: httpsURL(srv) + "/token/abc-1", ExpiresIn: 600}
+
+	params := func(mutate func(*opclient.CreateOutgoingPaymentsParams)) opclient.CreateOutgoingPaymentsParams {
+		p := opclient.CreateOutgoingPaymentsParams{
+			ClientWalletAddress: wallet,
+			StoreQuoteURL:       wallet + "/quotes/q-tienda",
+			PlatformQuoteURL:    wallet + "/quotes/q-plataforma",
+			Token:               token,
+		}
+		mutate(&p)
+		return p
+	}
+
+	tests := []struct {
+		name   string
+		params opclient.CreateOutgoingPaymentsParams
+		want   string
+	}{
+		{
+			name:   "no client wallet address",
+			params: params(func(p *opclient.CreateOutgoingPaymentsParams) { p.ClientWalletAddress = "" }),
+			want:   "ClientWalletAddress",
+		},
+		{
+			name: "client wallet address in the $ilp form",
+			params: params(func(p *opclient.CreateOutgoingPaymentsParams) {
+				p.ClientWalletAddress = "$ilp.interledger-test.dev/laura-cajadebarrio"
+			}),
+			want: "ClientWalletAddress",
+		},
+		{
+			name:   "no store quote URL",
+			params: params(func(p *opclient.CreateOutgoingPaymentsParams) { p.StoreQuoteURL = "" }),
+			want:   "StoreQuoteURL",
+		},
+		{
+			name:   "store quote URL without a host",
+			params: params(func(p *opclient.CreateOutgoingPaymentsParams) { p.StoreQuoteURL = "/quotes/q-tienda" }),
+			want:   "StoreQuoteURL",
+		},
+		{
+			name:   "no platform quote URL",
+			params: params(func(p *opclient.CreateOutgoingPaymentsParams) { p.PlatformQuoteURL = "" }),
+			want:   "PlatformQuoteURL",
+		},
+		{
+			name:   "no token value",
+			params: params(func(p *opclient.CreateOutgoingPaymentsParams) { p.Token.Value = "" }),
+			want:   "Token.Value",
+		},
+		{
+			name:   "no token manage URL",
+			params: params(func(p *opclient.CreateOutgoingPaymentsParams) { p.Token.ManageURL = "" }),
+			want:   "Token.ManageURL",
+		},
+		{
+			name: "token manage URL that is not a token URL",
+			params: params(func(p *opclient.CreateOutgoingPaymentsParams) {
+				p.Token.ManageURL = "https://auth.example/continue/grant-1"
+			}),
+			want: "Token.ManageURL",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := client.CreateOutgoingPayments(context.Background(), test.params)
+			if err == nil {
+				t.Fatalf("CreateOutgoingPayments(%+v) accepted params it cannot use, want an error", test.params)
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Errorf("error %q does not name %s", err, test.want)
+			}
+		})
+	}
+}
+
+// The status of a collection point (contract 8.8) reads the SIGNED endpoint:
+// the public document of an incoming payment does not carry the completion, so
+// a route built on it could hand out money on an unpaid withdrawal.
+func TestIncomingPaymentStatus(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus opclient.IncomingPaymentStatus
+	}{
+		{
+			name:       "a complete collection point",
+			body:       `{"id":"https://rafiki-backend:3000/tienda-cajadebarrio/incoming-payments/ip-1","completed":true,"receivedAmount":{"assetCode":"COP","assetScale":2,"value":"20300000"},"methods":[]}`,
+			wantStatus: opclient.IncomingPaymentStatus{Completed: true, Received: opclient.Amount{AssetCode: "COP", AssetScale: 2, Value: "20300000"}},
+		},
+		{
+			name:       "a collection point still receiving",
+			body:       `{"id":"https://rafiki-backend:3000/tienda-cajadebarrio/incoming-payments/ip-1","completed":false,"receivedAmount":{"assetCode":"COP","assetScale":2,"value":"5000000"},"methods":[]}`,
+			wantStatus: opclient.IncomingPaymentStatus{Completed: false, Received: opclient.Amount{AssetCode: "COP", AssetScale: 2, Value: "5000000"}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var authorization string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/incoming-payments/ip-1") {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				mu.Lock()
+				authorization = r.Header.Get("Authorization")
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, test.body)
+			}))
+			defer srv.Close()
+
+			client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(srv) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+			if err != nil {
+				t.Fatalf("New() returned an error: %v", err)
+			}
+
+			got, err := client.IncomingPaymentStatus(context.Background(), httpsURL(srv)+"/incoming-payments/ip-1", "token-tienda")
+			if err != nil {
+				t.Fatalf("IncomingPaymentStatus() returned an error: %v", err)
+			}
+
+			mu.Lock()
+			sent := authorization
+			mu.Unlock()
+			if sent != "GNAP token-tienda" {
+				t.Errorf("status authorization = %q, want the signed read with the access token", sent)
+			}
+			if got != test.wantStatus {
+				t.Errorf("IncomingPaymentStatus() = %+v, want %+v", got, test.wantStatus)
+			}
+		})
+	}
+}
+
+// The status read needs the URL it reads and the token it reads it with.
+func TestIncomingPaymentStatusRejectsParamsItCannotUse(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	// The stub fails the test if it is ever reached: validation happens before
+	// the network, not at the first response.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("a request went out before the parameters were validated: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(srv) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	url := httpsURL(srv) + "/incoming-payments/ip-1"
+
+	tests := []struct {
+		name               string
+		incomingPaymentURL string
+		accessToken        string
+		want               string
+	}{
+		{
+			name:               "no incoming payment URL",
+			incomingPaymentURL: "",
+			accessToken:        "token-tienda",
+			want:               "incomingPaymentURL",
+		},
+		{
+			name:               "no access token",
+			incomingPaymentURL: url,
+			accessToken:        "",
+			want:               "accessToken",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := client.IncomingPaymentStatus(context.Background(), test.incomingPaymentURL, test.accessToken)
+			if err == nil {
+				t.Fatal("IncomingPaymentStatus() accepted params it cannot use, want an error")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Errorf("error %q does not name %s", err, test.want)
+			}
+		})
+	}
+}
+
+// The wait for the money to land (contract 8.7 step 3): poll the signed status
+// until the incoming payment is complete or the budget runs out.
+func TestWaitForIncomingPayment(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	newClient := func(t *testing.T, srv *httptest.Server) *opclient.Client {
+		t.Helper()
+		client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(srv) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+		if err != nil {
+			t.Fatalf("New() returned an error: %v", err)
+		}
+		return client
+	}
+
+	pendingBody := `{"id":"https://rafiki-backend:3000/tienda-cajadebarrio/incoming-payments/ip-1","completed":false,"receivedAmount":{"assetCode":"COP","assetScale":2,"value":"5000000"},"methods":[]}`
+	completeBody := `{"id":"https://rafiki-backend:3000/tienda-cajadebarrio/incoming-payments/ip-1","completed":true,"receivedAmount":{"assetCode":"COP","assetScale":2,"value":"20300000"},"methods":[]}`
+
+	t.Run("returns as soon as the payment completes", func(t *testing.T) {
+		var mu sync.Mutex
+		var polls int
+		var authorizations []string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			index := polls
+			polls++
+			authorizations = append(authorizations, r.Header.Get("Authorization"))
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if index == 0 {
+				fmt.Fprint(w, pendingBody)
+				return
+			}
+			fmt.Fprint(w, completeBody)
+		}))
+		defer srv.Close()
+
+		client := newClient(t, srv)
+		started := time.Now()
+		got, err := client.WaitForIncomingPayment(context.Background(), opclient.WaitForIncomingPaymentParams{
+			IncomingPaymentURL: httpsURL(srv) + "/incoming-payments/ip-1",
+			AccessToken:        "token-tienda",
+			Timeout:            5 * time.Second,
+			Interval:           10 * time.Millisecond,
+		})
+		if err != nil {
+			t.Fatalf("WaitForIncomingPayment() returned an error: %v", err)
+		}
+		want := opclient.IncomingPaymentStatus{Completed: true, Received: opclient.Amount{AssetCode: "COP", AssetScale: 2, Value: "20300000"}}
+		if got != want {
+			t.Errorf("WaitForIncomingPayment() = %+v, want %+v", got, want)
+		}
+		mu.Lock()
+		pollCount, sent := polls, authorizations
+		mu.Unlock()
+		if pollCount != 2 {
+			t.Errorf("the resource server received %d status reads, want 2 (pending, then complete)", pollCount)
+		}
+		for i, authorization := range sent {
+			if authorization != "GNAP token-tienda" {
+				t.Errorf("status read %d authorization = %q, want the signed read", i, authorization)
+			}
+		}
+		if elapsed := time.Since(started); elapsed > 5*time.Second {
+			t.Errorf("the wait took %s after the payment completed", elapsed)
+		}
+	})
+
+	t.Run("an already complete payment returns without waiting", func(t *testing.T) {
+		var mu sync.Mutex
+		var polls int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			polls++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, completeBody)
+		}))
+		defer srv.Close()
+
+		client := newClient(t, srv)
+		got, err := client.WaitForIncomingPayment(context.Background(), opclient.WaitForIncomingPaymentParams{
+			IncomingPaymentURL: httpsURL(srv) + "/incoming-payments/ip-1",
+			AccessToken:        "token-tienda",
+			Timeout:            5 * time.Second,
+			Interval:           10 * time.Millisecond,
+		})
+		if err != nil {
+			t.Fatalf("WaitForIncomingPayment() returned an error: %v", err)
+		}
+		if !got.Completed {
+			t.Errorf("WaitForIncomingPayment() = %+v, want a completed status", got)
+		}
+		mu.Lock()
+		pollCount := polls
+		mu.Unlock()
+		if pollCount != 1 {
+			t.Errorf("the resource server received %d status reads, want 1", pollCount)
+		}
+	})
+
+	// Invariant 1: no money leaves before the payment is completed. A caller
+	// that cannot prove completion must not proceed, so the timeout is an
+	// error, never a success.
+	t.Run("a budget that runs out without completion is an error", func(t *testing.T) {
+		var mu sync.Mutex
+		var polls int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			polls++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, pendingBody)
+		}))
+		defer srv.Close()
+
+		client := newClient(t, srv)
+		url := httpsURL(srv) + "/incoming-payments/ip-1"
+		_, err := client.WaitForIncomingPayment(context.Background(), opclient.WaitForIncomingPaymentParams{
+			IncomingPaymentURL: url,
+			AccessToken:        "token-tienda",
+			Timeout:            120 * time.Millisecond,
+			Interval:           10 * time.Millisecond,
+		})
+		if err == nil {
+			t.Fatal("WaitForIncomingPayment() reported success without proof of completion, want an error")
+		}
+		if !strings.Contains(err.Error(), url) {
+			t.Errorf("error %q does not name the incoming payment %s", err, url)
+		}
+		if strings.Contains(err.Error(), "completed=true") {
+			t.Errorf("error %q reports completion, and nothing completed", err)
+		}
+		mu.Lock()
+		pollCount := polls
+		mu.Unlock()
+		if pollCount < 2 {
+			t.Errorf("the resource server received %d status reads, want the budget to be spent polling", pollCount)
+		}
+	})
+
+	t.Run("a cancelled context stops the polling", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, pendingBody)
+		}))
+		defer srv.Close()
+
+		client := newClient(t, srv)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := client.WaitForIncomingPayment(ctx, opclient.WaitForIncomingPaymentParams{
+				IncomingPaymentURL: httpsURL(srv) + "/incoming-payments/ip-1",
+				AccessToken:        "token-tienda",
+				Timeout:            30 * time.Second,
+				Interval:           10 * time.Millisecond,
+			})
+			done <- err
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("WaitForIncomingPayment() returned %v, want a context cancellation", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the wait kept polling after the context was cancelled")
+		}
+	})
+
+	// The doc comment says a zero Interval means one second: the behavior shows
+	// the pause between the polls, measured on a payment that completes on the
+	// second read.
+	t.Run("a zero interval waits one second between polls", func(t *testing.T) {
+		var mu sync.Mutex
+		var polls int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			index := polls
+			polls++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if index == 0 {
+				fmt.Fprint(w, pendingBody)
+				return
+			}
+			fmt.Fprint(w, completeBody)
+		}))
+		defer srv.Close()
+
+		client := newClient(t, srv)
+		started := time.Now()
+		got, err := client.WaitForIncomingPayment(context.Background(), opclient.WaitForIncomingPaymentParams{
+			IncomingPaymentURL: httpsURL(srv) + "/incoming-payments/ip-1",
+			AccessToken:        "token-tienda",
+			Timeout:            5 * time.Second,
+		})
+		if err != nil {
+			t.Fatalf("WaitForIncomingPayment() returned an error: %v", err)
+		}
+		if !got.Completed {
+			t.Errorf("WaitForIncomingPayment() = %+v, want a completed status", got)
+		}
+		if elapsed := time.Since(started); elapsed < 900*time.Millisecond {
+			t.Errorf("the wait between the two polls took %s, want the one second default", elapsed)
+		}
+	})
+}
+
+// The wait needs the URL it polls and the token it polls with; a negative
+// budget or interval is a value it cannot use either.
+func TestWaitForIncomingPaymentRejectsParamsItCannotUse(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	// The stub fails the test if it is ever reached: validation happens before
+	// the network, not at the first response.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("a request went out before the parameters were validated: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(srv) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	url := httpsURL(srv) + "/incoming-payments/ip-1"
+
+	params := func(mutate func(*opclient.WaitForIncomingPaymentParams)) opclient.WaitForIncomingPaymentParams {
+		p := opclient.WaitForIncomingPaymentParams{
+			IncomingPaymentURL: url,
+			AccessToken:        "token-tienda",
+			Timeout:            15 * time.Second,
+			Interval:           time.Second,
+		}
+		mutate(&p)
+		return p
+	}
+
+	tests := []struct {
+		name string
+		call func() error
+		want string
+	}{
+		{
+			name: "no incoming payment URL",
+			call: func() error {
+				_, err := client.WaitForIncomingPayment(context.Background(), params(func(p *opclient.WaitForIncomingPaymentParams) { p.IncomingPaymentURL = "" }))
+				return err
+			},
+			want: "IncomingPaymentURL",
+		},
+		{
+			name: "no access token",
+			call: func() error {
+				_, err := client.WaitForIncomingPayment(context.Background(), params(func(p *opclient.WaitForIncomingPaymentParams) { p.AccessToken = "" }))
+				return err
+			},
+			want: "AccessToken",
+		},
+		{
+			name: "negative timeout",
+			call: func() error {
+				_, err := client.WaitForIncomingPayment(context.Background(), params(func(p *opclient.WaitForIncomingPaymentParams) { p.Timeout = -time.Second }))
+				return err
+			},
+			want: "Timeout",
+		},
+		{
+			name: "negative interval",
+			call: func() error {
+				_, err := client.WaitForIncomingPayment(context.Background(), params(func(p *opclient.WaitForIncomingPaymentParams) { p.Interval = -time.Second }))
+				return err
+			},
+			want: "Interval",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.call()
+			if err == nil {
+				t.Fatal("the call accepted params it cannot use, want an error")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Errorf("error %q does not name %s", err, test.want)
+			}
+		})
 	}
 }
 

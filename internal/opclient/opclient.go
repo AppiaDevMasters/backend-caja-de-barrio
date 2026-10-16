@@ -578,6 +578,20 @@ func validateReceiverParam(name, receiver string) error {
 	return nil
 }
 
+// validateQuoteURLParam checks that a parameter names a URL a quote lives at,
+// the same shape a receiver has but named for what it points to.
+func validateQuoteURLParam(name, raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fmt.Errorf("opclient: %s is empty", name)
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return fmt.Errorf("opclient: %s=%q is not the URL of a quote", name, raw)
+	}
+	return nil
+}
+
 // OutgoingPaymentGrantParams names the interactive grant of the cupo (contract
 // 8.2): one grant of outgoing-payment that caps what the client wallet can
 // debit, in whole units of the client's own asset, so the caller picks the
@@ -826,6 +840,255 @@ func toAccessToken(token as.AccessToken) AccessToken {
 		expiresIn = *token.ExpiresIn
 	}
 	return AccessToken{Value: token.Value, ManageURL: token.Manage, ExpiresIn: expiresIn}
+}
+
+// CreateOutgoingPaymentsParams names the last half of the withdrawal (contract
+// 8.7 step 2): the client wallet that pays, the two quotes it pays, and the
+// approved access token of the interactive grant of the cupo.
+type CreateOutgoingPaymentsParams struct {
+	// ClientWalletAddress is the wallet the payments leave from, the one the
+	// interactive grant was asked for.
+	ClientWalletAddress string
+
+	// StoreQuoteURL and PlatformQuoteURL are the two quotes of the withdrawal,
+	// the store's and the platform's, in that order.
+	StoreQuoteURL    string
+	PlatformQuoteURL string
+
+	// Token is the approved access token of the grant. It rotates after each
+	// payment, so the value that arrives is dead by the time this returns.
+	Token AccessToken
+}
+
+// OutgoingPayment is one payment the client wallet made: where it lives on the
+// resource server, how much it debited and received, and whether the resource
+// server reported it as failed.
+type OutgoingPayment struct {
+	URL           string
+	DebitAmount   Amount
+	ReceiveAmount Amount
+	Failed        bool
+}
+
+// OutgoingPayments are the two payments of one withdrawal, with the access
+// token as it ended: contract 8.7 rotates the token after each use, so every
+// value that paid is dead and the caller stores Token, which is the one the
+// last rotation produced.
+type OutgoingPayments struct {
+	Store    OutgoingPayment
+	Platform OutgoingPayment
+	Token    AccessToken
+}
+
+// CreateOutgoingPayments runs the payment half of the withdrawal (contract 8.7
+// step 2): it creates the store's outgoing payment with the approved token,
+// rotates the token, creates the platform's outgoing payment with the rotated
+// value, and rotates it once more, so the caller stores a token that has not
+// paid anything yet.
+func (c *Client) CreateOutgoingPayments(ctx context.Context, params CreateOutgoingPaymentsParams) (OutgoingPayments, error) {
+	// Everything is validated before the first payment, so a bad parameter
+	// cannot leave one payment made and one missing.
+	clientWallet, err := validateWalletAddressParam("ClientWalletAddress", params.ClientWalletAddress)
+	if err != nil {
+		return OutgoingPayments{}, err
+	}
+	if err := validateQuoteURLParam("StoreQuoteURL", params.StoreQuoteURL); err != nil {
+		return OutgoingPayments{}, err
+	}
+	if err := validateQuoteURLParam("PlatformQuoteURL", params.PlatformQuoteURL); err != nil {
+		return OutgoingPayments{}, err
+	}
+	if strings.TrimSpace(params.Token.Value) == "" {
+		return OutgoingPayments{}, errors.New("opclient: Token.Value is empty")
+	}
+	// Without a management URL the token cannot rotate after the first payment,
+	// and the second payment would run on a token the auth server already took
+	// away.
+	if err := validateTokenURLParam("Token.ManageURL", params.Token.ManageURL); err != nil {
+		return OutgoingPayments{}, err
+	}
+
+	store, err := c.createOutgoingPayment(ctx, "the store", clientWallet, params.StoreQuoteURL, params.Token.Value)
+	if err != nil {
+		return OutgoingPayments{}, err
+	}
+
+	rotated, err := c.RotateAccessToken(ctx, params.Token.ManageURL, params.Token.Value)
+	if err != nil {
+		return OutgoingPayments{}, fmt.Errorf("opclient: after paying the store: %w", err)
+	}
+
+	platform, err := c.createOutgoingPayment(ctx, "the platform", clientWallet, params.PlatformQuoteURL, rotated.Value)
+	if err != nil {
+		return OutgoingPayments{}, err
+	}
+
+	final, err := c.RotateAccessToken(ctx, rotated.ManageURL, rotated.Value)
+	if err != nil {
+		return OutgoingPayments{}, fmt.Errorf("opclient: after paying the platform: %w", err)
+	}
+
+	return OutgoingPayments{Store: store, Platform: platform, Token: final}, nil
+}
+
+// createOutgoingPayment pays one quote from the client wallet with one access
+// token. A payment the resource server reports as failed is an error, not a
+// success: the money did not move, and the caller must not go on as if it had.
+func (c *Client) createOutgoingPayment(ctx context.Context, role, clientWallet, quoteURL, accessToken string) (OutgoingPayment, error) {
+	var payload rs.CreateOutgoingPaymentRequest
+	if err := payload.FromCreateOutgoingPaymentRequestFromQuote(rs.CreateOutgoingPaymentRequestFromQuote{
+		WalletAddressSchema: clientWallet,
+		QuoteId:             quoteURL,
+	}); err != nil {
+		return OutgoingPayment{}, fmt.Errorf("opclient: building the outgoing payment of %s: %w", role, err)
+	}
+
+	payment, err := c.sdk.OutgoingPayment.Create(ctx, openpayments.OutgoingPaymentCreateParams{
+		BaseURL:     clientWallet,
+		AccessToken: accessToken,
+		Payload:     payload,
+	})
+	if err != nil {
+		return OutgoingPayment{}, fmt.Errorf("opclient: creating the outgoing payment of %s from %s (quote %s): %w", role, clientWallet, quoteURL, err)
+	}
+
+	if payment.Id == nil || *payment.Id == "" {
+		return OutgoingPayment{}, fmt.Errorf("opclient: the resource server did not return the URL of the outgoing payment of %s", role)
+	}
+	if payment.Failed != nil && *payment.Failed {
+		return OutgoingPayment{}, fmt.Errorf("opclient: the resource server reports the outgoing payment of %s (%s) as failed: no money moved", role, *payment.Id)
+	}
+
+	return OutgoingPayment{
+		URL:           *payment.Id,
+		DebitAmount:   toAmount(payment.DebitAmount),
+		ReceiveAmount: toAmount(payment.ReceiveAmount),
+		Failed:        payment.Failed != nil && *payment.Failed,
+	}, nil
+}
+
+// IncomingPaymentStatus is how complete a collection point is (contract 8.8):
+// whether it received everything it asked for, and how much it has so far.
+type IncomingPaymentStatus struct {
+	Completed bool
+	Received  Amount
+}
+
+// IncomingPaymentStatus reads the state of one collection point (contract 8.8).
+// It reads the signed endpoint with the access token, never the public one: the
+// public document of an incoming payment carries the received amount but not
+// the completion, so a route built on it could hand out money on an unpaid
+// withdrawal.
+func (c *Client) IncomingPaymentStatus(ctx context.Context, incomingPaymentURL, accessToken string) (IncomingPaymentStatus, error) {
+	if strings.TrimSpace(incomingPaymentURL) == "" {
+		return IncomingPaymentStatus{}, errors.New("opclient: incomingPaymentURL is empty")
+	}
+	if strings.TrimSpace(accessToken) == "" {
+		return IncomingPaymentStatus{}, errors.New("opclient: accessToken is empty")
+	}
+
+	payment, err := c.sdk.IncomingPayment.Get(ctx, openpayments.IncomingPaymentGetParams{URL: incomingPaymentURL, AccessToken: accessToken})
+	if err != nil {
+		return IncomingPaymentStatus{}, fmt.Errorf("opclient: reading the status of the incoming payment %s: %w", incomingPaymentURL, err)
+	}
+
+	return IncomingPaymentStatus{Completed: payment.Completed, Received: toAmount(payment.ReceivedAmount)}, nil
+}
+
+// WaitForIncomingPaymentParams names the wait of the withdrawal (contract 8.7
+// step 3): which collection point to poll, with which credential, and for how
+// long.
+type WaitForIncomingPaymentParams struct {
+	IncomingPaymentURL string
+	AccessToken        string
+
+	// Timeout is how long the wait may poll before giving up. Zero means
+	// fifteen seconds, which is the budget the contract fixes (about 15 s).
+	Timeout time.Duration
+
+	// Interval is the pause between two status reads. Zero means one second.
+	Interval time.Duration
+}
+
+// The budgets of the wait, with the defaults the doc comments promise.
+const (
+	defaultWaitTimeout  = 15 * time.Second
+	defaultWaitInterval = time.Second
+)
+
+func effectiveWaitTimeout(timeout time.Duration) (time.Duration, error) {
+	if timeout < 0 {
+		return 0, fmt.Errorf("opclient: Timeout=%s is negative", timeout)
+	}
+	if timeout == 0 {
+		return defaultWaitTimeout, nil
+	}
+	return timeout, nil
+}
+
+func effectiveWaitInterval(interval time.Duration) (time.Duration, error) {
+	if interval < 0 {
+		return 0, fmt.Errorf("opclient: Interval=%s is negative", interval)
+	}
+	if interval == 0 {
+		return defaultWaitInterval, nil
+	}
+	return interval, nil
+}
+
+// WaitForIncomingPayment polls the signed status of the store's incoming
+// payment until it is complete or the budget runs out, and returns the last
+// status when it is complete.
+//
+// A timeout is an error, never a success: no money leaves before the payment
+// is completed, so a caller that cannot prove completion must not proceed.
+// A cancelled context returns as soon as the context is done.
+func (c *Client) WaitForIncomingPayment(ctx context.Context, params WaitForIncomingPaymentParams) (IncomingPaymentStatus, error) {
+	if strings.TrimSpace(params.IncomingPaymentURL) == "" {
+		return IncomingPaymentStatus{}, errors.New("opclient: IncomingPaymentURL is empty")
+	}
+	if strings.TrimSpace(params.AccessToken) == "" {
+		return IncomingPaymentStatus{}, errors.New("opclient: AccessToken is empty")
+	}
+	timeout, err := effectiveWaitTimeout(params.Timeout)
+	if err != nil {
+		return IncomingPaymentStatus{}, err
+	}
+	interval, err := effectiveWaitInterval(params.Interval)
+	if err != nil {
+		return IncomingPaymentStatus{}, err
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		status, err := c.IncomingPaymentStatus(ctx, params.IncomingPaymentURL, params.AccessToken)
+		if err != nil {
+			if ctx.Err() != nil {
+				return IncomingPaymentStatus{}, fmt.Errorf("opclient: waiting for the incoming payment %s: %w", params.IncomingPaymentURL, ctx.Err())
+			}
+			return IncomingPaymentStatus{}, err
+		}
+		if status.Completed {
+			return status, nil
+		}
+
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return IncomingPaymentStatus{}, fmt.Errorf("opclient: the incoming payment %s did not complete within %s, and a withdrawal cannot proceed without proof that the payment completed", params.IncomingPaymentURL, timeout)
+		}
+
+		pause := interval
+		if pause > remaining {
+			pause = remaining
+		}
+		timer := time.NewTimer(pause)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return IncomingPaymentStatus{}, fmt.Errorf("opclient: waiting for the incoming payment %s: %w", params.IncomingPaymentURL, ctx.Err())
+		case <-timer.C:
+		}
+	}
 }
 
 // InteractiveHash computes the hash of the callback of an interactive grant
