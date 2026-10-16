@@ -2,8 +2,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // TiendaCercana is one store the nearest-store search returned, with the cash it
@@ -116,3 +120,102 @@ func (s *Store) TiendasCercanas(ctx context.Context, params TiendasCercanasParam
 
 	return stores, nil
 }
+
+// ErrTiendaNoEncontrada says the store does not exist, which the route answers as
+// the contract's NO_ENCONTRADO.
+var ErrTiendaNoEncontrada = errors.New("la tienda no existe")
+
+// ErrEfectivoMenorQueReservado says the store tried to publish less cash than it
+// already reserved, which the contract refuses (6.3).
+var ErrEfectivoMenorQueReservado = errors.New("el efectivo publicado no puede ser menor que lo ya reservado")
+
+// Tienda is one store as the detail of the contract (6.2) needs it.
+type Tienda struct {
+	ID            string
+	Nombre        string
+	Direccion     string
+	Lat           float64
+	Lon           float64
+	Nivel         string
+	WalletAddress string
+	EfectivoLibre int64
+}
+
+// Tienda returns one store and the cash it still has free that day.
+func (s *Store) Tienda(ctx context.Context, id string, fecha time.Time) (Tienda, error) {
+	const query = `
+		select t.id,
+		       t.nombre,
+		       t.direccion,
+		       ST_Y(t.ubicacion::geometry),
+		       ST_X(t.ubicacion::geometry),
+		       t.nivel,
+		       t.wallet_address,
+		       coalesce(e.publicado_cop - e.reservado_cop, 0)
+		from tiendas t
+		left join efectivo_disponible e
+		       on e.tienda_id = t.id and e.fecha = $2::date
+		where t.id = $1`
+
+	var store Tienda
+	err := s.pool.QueryRow(ctx, query, id, fecha).Scan(
+		&store.ID,
+		&store.Nombre,
+		&store.Direccion,
+		&store.Lat,
+		&store.Lon,
+		&store.Nivel,
+		&store.WalletAddress,
+		&store.EfectivoLibre,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Tienda{}, fmt.Errorf("store: %w: %s", ErrTiendaNoEncontrada, id)
+	}
+	if err != nil {
+		return Tienda{}, fmt.Errorf("store: reading the store %s: %w", id, err)
+	}
+
+	return store, nil
+}
+
+// PublicarEfectivo publishes the cash of one store for one day and returns what is
+// still free (contract 6.3).
+//
+// Publishing less than what is already reserved is refused by the database itself,
+// and that refusal comes back as ErrEfectivoMenorQueReservado so the route can
+// answer with the contract's code instead of a server error.
+func (s *Store) PublicarEfectivo(ctx context.Context, tiendaID string, montoCOP int64, fecha time.Time) (int64, error) {
+	if montoCOP < 0 {
+		return 0, fmt.Errorf("store: montoCOP=%d, and cash is not negative", montoCOP)
+	}
+
+	const query = `
+		insert into efectivo_disponible (tienda_id, fecha, publicado_cop, reservado_cop)
+		values ($1, $2::date, $3, 0)
+		on conflict (tienda_id, fecha) do update set publicado_cop = excluded.publicado_cop
+		returning publicado_cop - reservado_cop`
+
+	var libre int64
+	if err := s.pool.QueryRow(ctx, query, tiendaID, fecha, montoCOP).Scan(&libre); err != nil {
+		var databaseError *pgconn.PgError
+		if errors.As(err, &databaseError) {
+			switch databaseError.Code {
+			case pgForeignKeyViolation:
+				return 0, fmt.Errorf("store: %w: %s", ErrTiendaNoEncontrada, tiendaID)
+			case pgCheckViolation:
+				return 0, fmt.Errorf("store: %w: %s", ErrEfectivoMenorQueReservado, tiendaID)
+			}
+		}
+		return 0, fmt.Errorf("store: publishing the cash of %s: %w", tiendaID, err)
+	}
+
+	return libre, nil
+}
+
+// The two PostgreSQL error codes this package reads: a foreign key that points at
+// nothing is a store that does not exist, and a check that fails here is the rule
+// that the published cash covers what is reserved.
+const (
+	pgForeignKeyViolation = "23503"
+	pgCheckViolation      = "23514"
+)

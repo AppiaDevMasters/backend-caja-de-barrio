@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -168,6 +169,98 @@ func TestTiendasCercanasAgainstADatabase(t *testing.T) {
 	}
 	if _, err := search(func(p *TiendasCercanasParams) { p.RadioM = -1 }); err == nil {
 		t.Error("TiendasCercanas() accepted a negative radius, want an error")
+	}
+}
+
+// The detail of one store (6.2) and the cash it publishes for the day (6.3),
+// against a real database, with its own store and its own cleanup.
+func TestTiendaYPublicarEfectivoAgainstADatabase(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL is not set: this runs against the stack")
+	}
+
+	ctx := context.Background()
+	database, err := Open(ctx, Config{DatabaseURL: dsn})
+	if err != nil {
+		t.Fatalf("Open() returned an error: %v", err)
+	}
+	defer database.Close()
+
+	if _, err := database.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() returned an error: %v", err)
+	}
+
+	const id = "tst_detalle"
+	today := time.Now().UTC()
+
+	remove := func() {
+		if _, err := database.pool.Exec(ctx, "delete from efectivo_disponible where tienda_id = $1", id); err != nil {
+			t.Errorf("removing the test cash: %v", err)
+		}
+		if _, err := database.pool.Exec(ctx, "delete from tiendas where id = $1", id); err != nil {
+			t.Errorf("removing the test store: %v", err)
+		}
+	}
+	remove()
+	// Deferred and not registered with t.Cleanup: cleanups run after the defers, so
+	// the pool would already be closed and the test would leave its store behind.
+	defer remove()
+
+	if _, err := database.pool.Exec(ctx, `
+		insert into tiendas (id, nombre, direccion, ubicacion, nivel, estado, wallet_address, whatsapp_tendero, nombre_tendero)
+		values ($1, 'Tienda del detalle', 'Cra 50 #92-15', ST_MakePoint(-75.558, 6.2761)::geography, 'comercio', 'activa', 'https://x/tienda', '573000000010', 'Don Jaime')`, id,
+	); err != nil {
+		t.Fatalf("inserting the store: %v", err)
+	}
+
+	// A store that has published nothing still exists, with no free cash.
+	store, err := database.Tienda(ctx, id, today)
+	if err != nil {
+		t.Fatalf("Tienda() returned an error: %v", err)
+	}
+	if store.ID != id || store.Nombre != "Tienda del detalle" || store.Nivel != "comercio" || store.WalletAddress != "https://x/tienda" {
+		t.Errorf("Tienda() = %+v, want the store that was inserted", store)
+	}
+	if store.EfectivoLibre != 0 {
+		t.Errorf("EfectivoLibre = %d, want 0 before the store publishes", store.EfectivoLibre)
+	}
+	if store.Lat < 6.27 || store.Lat > 6.28 || store.Direccion == "" {
+		t.Errorf("Tienda() = %+v, want the store's own point and address", store)
+	}
+
+	// Publishing inserts, and publishing again replaces the amount.
+	libre, err := database.PublicarEfectivo(ctx, id, 900000, today)
+	if err != nil {
+		t.Fatalf("PublicarEfectivo() returned an error: %v", err)
+	}
+	if libre != 900000 {
+		t.Errorf("PublicarEfectivo() = %d, want the published cash as the free one", libre)
+	}
+	if libre, err = database.PublicarEfectivo(ctx, id, 1000000, today); err != nil || libre != 1000000 {
+		t.Errorf("PublicarEfectivo() = %d with error %v, want the new amount and no error", libre, err)
+	}
+
+	// The rule of 6.3: a store cannot publish less than what it already reserved.
+	if _, err := database.pool.Exec(ctx, "update efectivo_disponible set reservado_cop = 500000 where tienda_id = $1", id); err != nil {
+		t.Fatalf("reserving cash for the test: %v", err)
+	}
+	if _, err := database.PublicarEfectivo(ctx, id, 400000, today); !errors.Is(err, ErrEfectivoMenorQueReservado) {
+		t.Errorf("PublicarEfectivo() below the reserved cash returned %v, want ErrEfectivoMenorQueReservado", err)
+	}
+	if libre, err = database.PublicarEfectivo(ctx, id, 600000, today); err != nil || libre != 100000 {
+		t.Errorf("PublicarEfectivo() = %d with error %v, want the published minus the reserved cash", libre, err)
+	}
+
+	// Nothing that does not exist, and no negative cash.
+	if _, err := database.Tienda(ctx, "tst_fantasma", today); !errors.Is(err, ErrTiendaNoEncontrada) {
+		t.Errorf("Tienda() of a store that does not exist returned %v, want ErrTiendaNoEncontrada", err)
+	}
+	if _, err := database.PublicarEfectivo(ctx, "tst_fantasma", 100000, today); !errors.Is(err, ErrTiendaNoEncontrada) {
+		t.Errorf("PublicarEfectivo() of a store that does not exist returned %v, want ErrTiendaNoEncontrada", err)
+	}
+	if _, err := database.PublicarEfectivo(ctx, id, -1, today); err == nil {
+		t.Error("PublicarEfectivo() accepted negative cash, want an error")
 	}
 }
 
