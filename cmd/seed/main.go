@@ -31,6 +31,10 @@ const (
 	assetScale = 2
 )
 
+// assetLiquidityTarget is how much the ASE is funded with for the demo, in the
+// smallest unit of the asset: with scale 2 this is 10.000.000 COP.
+const assetLiquidityTarget rafikiadmin.UInt64 = 1_000_000_000
+
 // actor is one wallet address the demo needs: both sides of a withdrawal and the
 // application identity that signs the Open Payments calls.
 type actor struct {
@@ -81,6 +85,13 @@ func run() error {
 		return fmt.Errorf("ensuring the %s asset: %w", assetCode, err)
 	}
 	fmt.Printf("asset %s scale %d id %s\n", asset.Code, asset.Scale, asset.ID)
+
+	// Without liquidity the ASE cannot move money, so no payment can complete.
+	deposited, err := client.EnsureAssetLiquidity(ctx, asset.ID, assetLiquidityTarget)
+	if err != nil {
+		return fmt.Errorf("ensuring the asset liquidity: %w", err)
+	}
+	fmt.Printf("asset liquidity target %d, deposited now %d\n", assetLiquidityTarget, deposited)
 
 	// The tenant setting is what makes Rafiki compose and accept wallet address
 	// URLs in https while the stack itself keeps publishing plain http.
