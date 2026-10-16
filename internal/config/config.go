@@ -68,6 +68,16 @@ type Rafiki struct {
 	// IdentityServerSecret is shared with the identity provider that approves
 	// interactive grants it opens in the user's browser.
 	IdentityServerSecret string
+
+	// AuthServerURL is the server to server address of the authorization server:
+	// the one that resolves inside the compose network, http://rafiki-auth:3006.
+	// The public address does not work here, because a container cannot reach the
+	// host's published ports.
+	AuthServerURL string
+
+	// AuthServerPublicURL is the address the user's browser opens for an
+	// interactive grant (the AUTH_SERVER_URL of rafiki/.env).
+	AuthServerPublicURL string
 }
 
 // Config holds every setting the backend reads from the environment. It grows
@@ -98,6 +108,8 @@ func Load() (Config, error) {
 			AdminAPISecret:       strings.TrimSpace(os.Getenv("RAFIKI_ADMIN_API_SECRET")),
 			SignatureSecret:      strings.TrimSpace(os.Getenv("RAFIKI_SIGNATURE_SECRET")),
 			IdentityServerSecret: strings.TrimSpace(os.Getenv("RAFIKI_IDENTITY_SERVER_SECRET")),
+			AuthServerURL:        strings.TrimSpace(os.Getenv("RAFIKI_AUTH_SERVER_URL")),
+			AuthServerPublicURL:  strings.TrimSpace(os.Getenv("RAFIKI_AUTH_SERVER_PUBLIC_URL")),
 		},
 		OP: OP{
 			KeyID:          strings.TrimSpace(os.Getenv("OP_KEY_ID")),

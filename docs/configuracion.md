@@ -28,6 +28,8 @@ Ningun valor de esta tabla es un secreto por si mismo: los secretos viven en
 | `RAFIKI_ADMIN_API_SECRET` | — | El `ADMIN_API_SECRET` de `rafiki/.env`; es el `apiSecret` del tenant operador. |
 | `RAFIKI_SIGNATURE_SECRET` | — | El `SIGNATURE_SECRET` de `rafiki/.env`: verifica la cabecera `Rafiki-Signature` de cada webhook. |
 | `RAFIKI_IDENTITY_SERVER_SECRET` | — | El `IDENTITY_SERVER_SECRET` de `rafiki/.env`: lo comparte el IdP del grant interactivo. |
+| `RAFIKI_AUTH_SERVER_URL` | — | Direccion **servidor a servidor** del auth server, la que resuelve dentro de la red de compose: `http://rafiki-auth:3006`. **Ojo: no es el valor `AUTH_SERVER_URL` de `rafiki/.env`**, que es el publico; adentro de un contenedor el camino al host esta bloqueado y esa direccion no sirve. |
+| `RAFIKI_AUTH_SERVER_PUBLIC_URL` | — | La que abre el navegador del usuario: el `AUTH_SERVER_URL` de `rafiki/.env` (hoy `http://100.76.141.47:3006`). Solo se usa para el redirect final del grant interactivo. |
 
 Los cuatro valores que se copian de `rafiki/.env` no son obligatorios para
 arrancar: `/health` responde sin ellos, y el componente que necesita un secreto

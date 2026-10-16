@@ -159,3 +159,23 @@ func TestLoadReadsTheAseSecrets(t *testing.T) {
 		t.Errorf("IdentityServerSecret = %q, want %q", cfg.Rafiki.IdentityServerSecret, "identidad")
 	}
 }
+
+// The identity provider needs the authorization server twice and the two are
+// deliberately different: the address that resolves inside the compose network,
+// and the one the user's browser opens. Neither works for the other's purpose,
+// because the host's ports are unreachable from the containers.
+func TestLoadReadsTheTwoAuthServerURLs(t *testing.T) {
+	t.Setenv("RAFIKI_AUTH_SERVER_URL", "http://rafiki-auth:3006")
+	t.Setenv("RAFIKI_AUTH_SERVER_PUBLIC_URL", "http://100.76.141.47:3006")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() returned an error: %v", err)
+	}
+	if cfg.Rafiki.AuthServerURL != "http://rafiki-auth:3006" {
+		t.Errorf("AuthServerURL = %q, want the address inside the network", cfg.Rafiki.AuthServerURL)
+	}
+	if cfg.Rafiki.AuthServerPublicURL != "http://100.76.141.47:3006" {
+		t.Errorf("AuthServerPublicURL = %q, want the address the browser opens", cfg.Rafiki.AuthServerPublicURL)
+	}
+}
