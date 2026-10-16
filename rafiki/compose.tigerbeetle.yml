@@ -1,0 +1,45 @@
+# Overlay opcional: contabilidad con TigerBeetle en lugar de Postgres.
+#
+#   docker compose -f docker-compose.yml -f compose.tigerbeetle.yml up -d
+#
+# TigerBeetle corre con `privileged: true` y necesita memoria suficiente: si el
+# contenedor sale con codigo 137, sube el limite de memoria de Docker.
+
+services:
+  rafiki-backend:
+    environment:
+      USE_TIGERBEETLE: 'true'
+      TIGERBEETLE_CLUSTER_ID: '0'
+      TIGERBEETLE_REPLICA_ADDRESSES: 10.10.0.50:4342
+    depends_on:
+      tigerbeetle:
+        condition: service_started
+
+  tigerbeetle:
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.16.29
+    container_name: rafiki-tigerbeetle
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - tigerbeetle-data:/var/lib/tigerbeetle
+    networks:
+      rafiki:
+        ipv4_address: 10.10.0.50
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -ex
+        DATA_FILE=/var/lib/tigerbeetle/cluster_0_replica_0.tigerbeetle
+        set +e
+        ls $$DATA_FILE
+        DATA_FILE_EXISTS="$$?"
+        set -e
+        echo $$DATA_FILE_EXISTS
+        if [ "$$DATA_FILE_EXISTS" != 0 ]; then
+          ./tigerbeetle format --cluster=0 --replica=0 --replica-count=1 $$DATA_FILE;
+        fi
+        ./tigerbeetle start --addresses=0.0.0.0:4342 --development $$DATA_FILE
+
+volumes:
+  tigerbeetle-data:

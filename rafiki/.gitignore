@@ -1,0 +1,9 @@
+# Secreto: no versionar. Generado por scripts/init.sh
+.env
+
+# Claves Ed25519 del ASE.
+config/keys/*
+!config/keys/.gitkeep
+
+# Volcados locales.
+data/
