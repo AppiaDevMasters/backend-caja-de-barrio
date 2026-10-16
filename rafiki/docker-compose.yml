@@ -73,8 +73,10 @@ services:
       # Contabilidad en Postgres para minimizar piezas moviles.
       # Para TigerBeetle usa el overlay: -f compose.tigerbeetle.yml
       USE_TIGERBEETLE: 'false'
-      # URL publica del servidor de recursos: es la base de cada wallet address.
-      OPEN_PAYMENTS_URL: ${OPEN_PAYMENTS_URL:-http://localhost:3000}
+      # Base que el servidor de recursos anuncia a los clientes (el `resourceServer`
+      # del documento de wallet address): dentro de la red, por nombre de servicio,
+      # porque los contenedores no alcanzan los puertos TCP del host.
+      OPEN_PAYMENTS_URL: ${OPEN_PAYMENTS_URL:-http://rafiki-backend:3000}
       WALLET_ADDRESS_URL: ${WALLET_ADDRESS_URL:-http://rafiki-backend:3000/.well-known/pay}
       ILP_ADDRESS: ${ILP_ADDRESS:-test.caja-de-barrio}
       ILP_CONNECTOR_URL: ${ILP_CONNECTOR_URL:-http://rafiki-backend:3002}
@@ -168,7 +170,9 @@ services:
       NODE_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-debug}
       GRAPHQL_URL: http://rafiki-backend:3001/graphql
-      OPEN_PAYMENTS_URL: ${OPEN_PAYMENTS_URL:-http://localhost:3000}
+      # La UI enlaza wallet addresses que abre un navegador, asi que usa la base
+      # publica y no el nombre de servicio que anuncian los contenedores.
+      OPEN_PAYMENTS_URL: ${PUBLIC_OPEN_PAYMENTS_URL:-http://localhost:3000}
       AUTH_ENABLED: 'false'
       ENABLE_INSECURE_MESSAGE_COOKIE: 'true'
       SIGNATURE_VERSION: '1'

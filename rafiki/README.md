@@ -121,7 +121,7 @@ incluye un `.env.example` para el backend — el harness de Pi bloquea escribir 
 | `HTTP_ADDR` | compose | Dirección de escucha (`:8000`). |
 | `LOG_LEVEL` | `.env` | Nivel de log del backend. |
 | `RAFIKI_ADMIN_URL` | compose | Admin API del servidor de recursos, por nombre de servicio. |
-| `RAFIKI_OPEN_PAYMENTS_URL` | `.env` (`OPEN_PAYMENTS_URL`) | URL pública que anuncia el ASE. |
+| `RAFIKI_OPEN_PAYMENTS_URL` | compose | Base efectiva de las wallet addresses del ASE; la lee el seed. |
 | `RAFIKI_TENANT_ID` | `.env` (`OPERATOR_TENANT_ID`) | Tenant operador que actúa. |
 | `RAFIKI_ADMIN_API_SECRET` | `.env` (`ADMIN_API_SECRET`) | Firma las llamadas a la Admin API. |
 | `RAFIKI_SIGNATURE_SECRET` | `.env` (`SIGNATURE_SECRET`) | Verifica la firma de los webhooks. |
@@ -191,7 +191,7 @@ de Pi bloquea escribir archivos `.env.*`; esta tabla es la referencia.
 | Variable                          | Descripción                                                          |
 | --------------------------------- | -------------------------------------------------------------------- |
 | `RAFIKI_VERSION`                  | Tag de las imágenes `ghcr.io/interledger/rafiki-*`                    |
-| `RAFIKI_PUBLIC_HOST` (solo `init.sh`) | Host con el que se anuncian `OPEN_PAYMENTS_URL`, `AUTH_SERVER_URL` e `IDENTITY_SERVER_URL`; por defecto `localhost` (no queda en `.env`) |
+| `RAFIKI_PUBLIC_HOST` (solo `init.sh`) | Host con el que se anuncian `PUBLIC_OPEN_PAYMENTS_URL`, `AUTH_SERVER_URL` e `IDENTITY_SERVER_URL`; por defecto `localhost` (no queda en `.env`) |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD` | Credenciales de Postgres; la contraseña va en hex por ser segura en URL |
 | `BACKEND_DB`, `AUTH_DB`           | Nombres de las dos bases                                             |
 | `INSTANCE_NAME`                   | Nombre visible del ASE                                               |
@@ -203,7 +203,8 @@ de Pi bloquea escribir archivos `.env.*`; esta tabla es la referencia.
 | `DB_ENCRYPTION_SECRET`            | Cifra payloads de pagos parciales (base64 de 32 bytes)               |
 | `IDENTITY_SERVER_SECRET`          | Secreto compartido con el IdP (cabecera `x-idp-secret`)              |
 | `COOKIE_KEY`                      | Firma las cookies de sesión de interacción                           |
-| `OPEN_PAYMENTS_URL`               | Base pública de las wallet addresses del servidor de recursos        |
+| `OPEN_PAYMENTS_URL`               | Base que el servidor de recursos anuncia a los clientes (el `resourceServer` del documento de wallet address): por nombre de servicio, `http://rafiki-backend:3000` |
+| `PUBLIC_OPEN_PAYMENTS_URL`        | La misma base vista por un navegador; la usa la UI de administración para enlazar wallet addresses |
 | `AUTH_SERVER_URL`                 | URL pública del servidor de autorización                             |
 | `IDENTITY_SERVER_URL`             | IdP que abre el navegador en un grant interactivo (lo sirve nuestro backend) |
 | `WEBHOOK_URL`                     | Endpoint de webhooks de nuestro backend, visto desde los contenedores |

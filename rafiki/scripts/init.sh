@@ -99,9 +99,14 @@ DB_ENCRYPTION_SECRET=$db_encryption_secret
 IDENTITY_SERVER_SECRET=$identity_server_secret
 COOKIE_KEY=$cookie_key
 
-# --- URLs publicas del entorno local --------------------------------------
-# Base de las wallet addresses que expone el servidor de recursos.
-OPEN_PAYMENTS_URL=http://$public_host:3000
+# --- URLs del entorno local -----------------------------------------------
+# Base que el servidor de recursos anuncia a los clientes (el `resourceServer`
+# del documento de wallet address). Dentro de la red, por nombre de servicio:
+# los contenedores no alcanzan los puertos TCP del host.
+OPEN_PAYMENTS_URL=http://rafiki-backend:3000
+# La misma base vista por un navegador. La usa la UI de administracion para enlazar
+# wallet addresses, asi que resuelve el host publico y no un nombre de contenedor.
+PUBLIC_OPEN_PAYMENTS_URL=http://$public_host:3000
 AUTH_SERVER_URL=http://$public_host:3006
 # IdP que abre el navegador durante un grant interactivo (lo sirve nuestro backend).
 # OJO: el auth server lo copia a la columna idpConsentUrl en el primer arranque;
