@@ -248,11 +248,19 @@ func (s *Store) LiberarVencidas(ctx context.Context, ahora time.Time) (int, erro
 			// No cast on the day: the value came out of a date column, so comparing it
 			// with the date column keeps the two sides of the comparison in the same
 			// type and out of reach of a session timezone.
-			if _, err := tx.Exec(ctx, `
+			tag, err := tx.Exec(ctx, `
 				update efectivo_disponible
 				set reservado_cop = reservado_cop - $3
-				where tienda_id = $1 and fecha = $2`, tiendaID, dia, monto); err != nil {
+				where tienda_id = $1 and fecha = $2`, tiendaID, dia, monto)
+			if err != nil {
 				return 0, fmt.Errorf("store: giving the cash of %s back: %w", tiendaID, err)
+			}
+			// Marking a reservation expired while its cash stays taken is the failure
+			// this whole day exists to prevent, and it would be silent: the money would
+			// stay locked with no error anywhere. So a day with no cash row is loud.
+			if tag.RowsAffected() != 1 {
+				return 0, fmt.Errorf("store: giving the cash of %s back on %s affected %d rows, and it had to affect one",
+					tiendaID, dia.Format("2006-01-02"), tag.RowsAffected())
 			}
 		}
 	}

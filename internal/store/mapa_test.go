@@ -38,7 +38,7 @@ func TestTiendasCercanasAgainstADatabase(t *testing.T) {
 		niveles  = "comercio,aliado"
 		publicad = int64(200000)
 	)
-	today := time.Now().UTC()
+	today := time.Now().In(zonaBogota)
 
 	remove := func() {
 		if _, err := database.pool.Exec(ctx, "delete from efectivo_disponible where tienda_id like 'tst_%'"); err != nil {
@@ -192,7 +192,9 @@ func TestTiendaYPublicarEfectivoAgainstADatabase(t *testing.T) {
 	}
 
 	const id = "tst_detalle"
-	today := time.Now().UTC()
+	// The day of the demo and not the machine's UTC day: the route asks with the
+	// demo's day, and a test on another day would agree with a defect.
+	today := time.Now().In(zonaBogota)
 
 	remove := func() {
 		if _, err := database.pool.Exec(ctx, "delete from efectivo_disponible where tienda_id = $1", id); err != nil {

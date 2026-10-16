@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+// zonaBogota is the day of the demo. The tests use it and not the machine's clock in
+// UTC: a test that uses UTC AGREES with a defect when the demo's day and the UTC day
+// are different days, which is exactly how the day defect of the release hid.
+var zonaBogota = time.FixedZone("America/Bogota", -5*60*60)
+
 // The reservation is the operation that takes money out of a store's reach, so it
 // is exercised against a real database, with its own data and its own cleanup.
 func TestReservarAgainstADatabase(t *testing.T) {
@@ -29,7 +34,7 @@ func TestReservarAgainstADatabase(t *testing.T) {
 		t.Fatalf("Migrate() returned an error: %v", err)
 	}
 
-	ahora := time.Now().UTC()
+	ahora := time.Now().In(zonaBogota)
 	remove := func() {
 		for _, statement := range []string{
 			"delete from reservas where id like 'tst_%'",
@@ -78,6 +83,20 @@ func TestReservarAgainstADatabase(t *testing.T) {
 		t.Errorf("the store has %d free after reserving 200.000 of 800.000, want 600.000", libre)
 	}
 
+	// The commission is computed with the cash the store has FREE and not with what it
+	// published. With 600.000 free, 100.000 costs 1333, and with the 800.000 published
+	// it would cost 1250: this assertion is what tells the two apart.
+	segunda, err := database.Reservar(ctx, ReservarParams{
+		ID: "tst_res_extra", TiendaID: "tst_jaime", PersonaID: "tst_laura",
+		MontoCOP: 100_000, Codigo: "1234", Ahora: ahora, Vigencia: 15 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("Reservar() returned an error: %v", err)
+	}
+	if segunda.ComisionTenderoCOP != 1_333 {
+		t.Errorf("the second reservation costs %d, want 1333: the commission is computed with the 600.000 free and not with the 800.000 published, which would be 1250", segunda.ComisionTenderoCOP)
+	}
+
 	// The cash already reserved is not available to anybody else.
 	_, err = database.Reservar(ctx, ReservarParams{
 		ID: "tst_res_2", TiendaID: "tst_jaime", PersonaID: "tst_laura",
@@ -115,6 +134,19 @@ func TestReservarAgainstADatabase(t *testing.T) {
 		t.Errorf("reserving at a store that does not exist returned %v, want ErrTiendaNoEncontrada", err)
 	}
 
+	// A refusal WRITES NOTHING: the cash stays where it was and no half made
+	// reservation is left behind for an attempt that was refused.
+	var reservations int
+	if err := database.pool.QueryRow(ctx, `select count(*) from reservas where tienda_id = 'tst_jaime'`).Scan(&reservations); err != nil {
+		t.Fatalf("counting the reservations: %v", err)
+	}
+	if reservations != 2 {
+		t.Errorf("the store has %d reservations after two accepted and one refused, want 2", reservations)
+	}
+	if libre := libreDe(t, database, ctx, "tst_jaime", ahora); libre != 500_000 {
+		t.Errorf("the free cash is %d after the refusals, want the 500.000 the two accepted reservations left", libre)
+	}
+
 	// THE RACE: two reservations of the same cash, at the same time. Only one can
 	// win, and the cash reserved never goes above the cash published.
 	crearTienda(t, database, ctx, "tst_carrera", "comercio", "activa", 500_000, ahora)
@@ -124,10 +156,15 @@ func TestReservarAgainstADatabase(t *testing.T) {
 		mutex   sync.Mutex
 		results []error
 	)
+	// Both goroutines wait for the same signal, so the two really overlap: without it
+	// they could run one after the other and the test would pass without proving
+	// anything about the race.
+	start := make(chan struct{})
 	for i := 0; i < 2; i++ {
 		waiting.Add(1)
 		go func(i int) {
 			defer waiting.Done()
+			<-start
 			_, err := database.Reservar(ctx, ReservarParams{
 				ID:        fmt.Sprintf("tst_res_carrera_%d", i),
 				TiendaID:  "tst_carrera",
@@ -142,6 +179,7 @@ func TestReservarAgainstADatabase(t *testing.T) {
 			mutex.Unlock()
 		}(i)
 	}
+	close(start)
 	waiting.Wait()
 
 	if len(results) != 2 {

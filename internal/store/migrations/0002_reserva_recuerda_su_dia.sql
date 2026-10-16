@@ -5,12 +5,21 @@
 -- asi que una liberacion que recalculara el dia buscaria el efectivo de otro dia y
 -- **nunca lo devolveria**. La columna guarda el dia que se uso, una sola vez.
 --
--- La carga inicial de las filas que ya existian usa el dia de la base; es lo mejor
--- que se puede hacer con datos de desarrollo, y las reservas nuevas quedan correctas
--- por construccion.
+-- LAS FILAS QUE YA EXISTIAN NO SE ADIVINAN. El dia de su efectivo es el que nombro
+-- el llamador cuando se crearon, y ese dia no esta en la fila: deducirlo del
+-- timestamp con la zona horaria de la sesion da un dia distinto por la tarde (se
+-- comprobo: una reserva de las 20:00 de Bogota queda con el dia UTC siguiente), y
+-- entonces la liberacion buscaria el efectivo de otro dia y **dejaria la plata de la
+-- tienda inmovilizada en silencio**. Asi que esta migracion **se niega a adivinar**:
+-- si hay filas que convertir, se detiene y el dia lo decide una persona.
 
 alter table reservas add column if not exists fecha_efectivo date;
 
-update reservas set fecha_efectivo = creada_en::date where fecha_efectivo is null;
+do $$
+begin
+	if exists (select 1 from reservas) then
+		raise exception 'hay reservas sin fecha_efectivo y el dia no se puede deducir del timestamp sin arriesgar la zona horaria: decidi el dia a mano antes de aplicar esta migracion';
+	end if;
+end $$;
 
 alter table reservas alter column fecha_efectivo set not null;
