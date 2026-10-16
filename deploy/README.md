@@ -59,7 +59,7 @@ red de Docker esos mismos nombres apuntan a Caddy (por alias de red).
    ```
 4. Instala:
    ```bash
-   ACME_EMAIL=tu@correo.com sudo -E ./deploy/instalar.sh
+   sudo ./deploy/instalar.sh
    ```
    El script hace todo esto:
    - instala Docker;
@@ -82,7 +82,7 @@ red de Docker esos mismos nombres apuntan a Caddy (por alias de red).
 
 | Tarea | Comando (en el VPS, desde la raíz del repo) |
 | --- | --- |
-| Actualizar después de un `git pull` | `sudo -E ./deploy/instalar.sh` (idempotente: conserva secretos y datos) |
+| Actualizar después de un `git pull` | `sudo ./deploy/instalar.sh` (idempotente: conserva secretos y datos) |
 | Ver el estado | `docker compose -f rafiki/docker-compose.yml -f deploy/compose.vps.yml ps` |
 | Ver logs | `docker logs -f caja-de-barrio-backend` · `docker logs -f rafiki-backend` · `docker logs -f caja-de-barrio-caddy` |
 | Reiniciar todo | `docker compose -f rafiki/docker-compose.yml -f deploy/compose.vps.yml restart` |

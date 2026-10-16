@@ -1,9 +1,6 @@
 # HTTPS del stack de Caja de Barrio en el VPS. Los certificados los emite Let's Encrypt
-# la primera vez que llega una petición a cada nombre. DOMINIO, ACME_EMAIL y el usuario
-# de la UI llegan como variables de entorno desde deploy/compose.vps.yml.
-{
-	email {$ACME_EMAIL}
-}
+# la primera vez que llega una petición a cada nombre (no hace falta correo). DOMINIO y el
+# usuario de la UI llegan como variables de entorno desde deploy/compose.vps.yml.
 
 # Open Payments: documentos de wallet address, incoming/outgoing payments y quotes.
 op.{$DOMINIO} {

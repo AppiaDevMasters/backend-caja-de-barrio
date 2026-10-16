@@ -31,7 +31,6 @@ services:
       - '443:443'
     environment:
       DOMINIO: ${DOMINIO:?falta DOMINIO, lo fija deploy/instalar.sh}
-      ACME_EMAIL: ${ACME_EMAIL:-}
       ADMIN_UI_USUARIO: ${ADMIN_UI_USUARIO:-admin}
       ADMIN_UI_HASH: ${ADMIN_UI_HASH:?falta ADMIN_UI_HASH, lo fija deploy/instalar.sh}
     volumes:

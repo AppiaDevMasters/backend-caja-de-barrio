@@ -5,7 +5,7 @@
 #
 # Uso, en el VPS, desde la raíz del repositorio clonado:
 #
-#   ACME_EMAIL=tu@correo.com sudo -E ./deploy/instalar.sh
+#   sudo ./deploy/instalar.sh
 #
 # Variables opcionales:
 #   DOMINIO      Dominio base. Por defecto <ip-con-guiones>.sslip.io (ej. 203-0-113-5.sslip.io).
@@ -23,7 +23,7 @@ compose=(docker compose -f rafiki/docker-compose.yml -f deploy/compose.vps.yml)
 paso() { printf '\n==> %s\n' "$*"; }
 env_val() { sed -n "s/^$1=//p" "$env_rafiki" | head -n 1; }
 
-[ "$(id -u)" -eq 0 ] || { echo "Corre con sudo: sudo -E ./deploy/instalar.sh" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || { echo "Corre con sudo: sudo ./deploy/instalar.sh" >&2; exit 1; }
 
 paso "Docker"
 if ! command -v docker >/dev/null; then
@@ -70,7 +70,6 @@ sed -i '/^# --- VPS (deploy\/instalar.sh) ---$/,$d' "$env_rafiki"
 cat >>"$env_rafiki" <<EOF
 # --- VPS (deploy/instalar.sh) ---
 DOMINIO=$dominio
-ACME_EMAIL=${ACME_EMAIL:-}
 ADMIN_UI_USUARIO=admin
 ADMIN_UI_HASH='$hash_admin'
 EOF
@@ -134,5 +133,5 @@ Wallet addresses del demo:
   https://op.$dominio/laura-cajadebarrio
   https://op.$dominio/app-cajadebarrio
 
-Para actualizar después de un git pull:  sudo -E ./deploy/instalar.sh
+Para actualizar después de un git pull:  sudo ./deploy/instalar.sh
 EOF
