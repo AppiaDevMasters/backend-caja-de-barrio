@@ -44,3 +44,21 @@ que se trabajo, no resumenes.
 | `rafiki/`, `Dockerfile` | El ASE local y la imagen del backend |
 
 Los prompts reales, sin resumir, estan en `prompts/`.
+
+## La segunda sesion de agente
+
+Parte de este repositorio la escribio una segunda sesion de Pi en el mismo arbol de
+trabajo, con una superficie de archivos disjunta y commits propios, para que las dos
+sesiones no se pisaran. Su aporte, tal como ella lo declaro y con cada hash verificado
+en este repositorio:
+
+- Superficie: `Dockerfile`, `rafiki/**`, `env.example` e `internal/ase/**`.
+- Commits propios: `5699d01`, `e46968f`, `a7da80a`, `934d3a3`, `39efeed`, `e0f0e6f`,
+  `f6e7ad6`, `cf1c8be`, `1369dde`, `d5a07d4`, `4889147` y `f08ffb4`.
+- Contenido: el stack local del ASE, la imagen del backend, la plantilla de variables
+  y los endpoints que Rafiki y el proveedor de identidad llaman (`/webhooks`,
+  `/rates` e `/idp/`) con su esquema de firma.
+
+Los mensajes entre las dos sesiones y sus instrucciones internas no se publican: son
+coordinacion entre herramientas, no prompts del equipo. Lo que importo de esa
+coordinacion quedo destilado en `odd/tasks/`.
