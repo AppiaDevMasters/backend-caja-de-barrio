@@ -204,6 +204,11 @@ services:
       RAFIKI_ADMIN_API_SECRET: ${ADMIN_API_SECRET:?}
       RAFIKI_SIGNATURE_SECRET: ${SIGNATURE_SECRET:?}
       RAFIKI_IDENTITY_SERVER_SECRET: ${IDENTITY_SERVER_SECRET:?}
+      # El IdP necesita las dos bases del auth server: la interna para hablar servidor
+      # a servidor (la publica no es alcanzable desde el contenedor) y la publica para
+      # el redirect con el que el navegador cierra la interaccion.
+      RAFIKI_AUTH_SERVER_URL: http://rafiki-auth:3006
+      RAFIKI_AUTH_SERVER_PUBLIC_URL: ${AUTH_SERVER_URL:?}
       OP_KEY_ID: ${KEY_ID:-}
       OP_PRIVATE_KEY_PATH: /home/backend/keys/op-private-key.pem
     volumes:
