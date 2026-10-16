@@ -1,6 +1,7 @@
-// Command seed provisions the local ASE with what the withdrawal flow needs: the
-// COP asset and one wallet address per actor of the demo. It is idempotent, so it
-// can run again after every stack restart.
+// Command seed provisions the local ASE with what the demo needs: the two
+// currencies (pesos for the withdrawal, dollars for the remittance), their
+// liquidity and one wallet address per actor. It is idempotent, so it can run
+// again after every stack restart.
 //
 // It reads the same RAFIKI_* variables as the backend:
 //
@@ -25,32 +26,63 @@ import (
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/rafikiadmin"
 )
 
-// The COP asset of the demo: pesos with two decimals, which is the asset scale
-// Open Payments uses for Colombian pesos.
+// The two currencies of the demo: the withdrawal moves pesos and the remittance is
+// paid in dollars. Both use two decimals, which is the asset scale Open Payments
+// works with for them.
 const (
-	assetCode  = "COP"
+	assetCOP   = "COP"
+	assetUSD   = "USD"
 	assetScale = 2
 )
-
-// assetLiquidityTarget is how much the ASE is funded with for the demo, in the
-// smallest unit of the asset: with scale 2 this is 10.000.000 COP.
-const assetLiquidityTarget rafikiadmin.UInt64 = 1_000_000_000
 
 // appAddress is the wallet address this backend acts as: the identity whose key
 // signs its Open Payments requests.
 const appAddress = "app-cajadebarrio"
 
-// actor is one wallet address the demo needs: both sides of a withdrawal and the
-// application identity that signs the Open Payments calls.
+// platformAddress is the COP account where the 1% platform commission is charged.
+// The contract asks for a COP account under the same user as app-cajadebarrio, so
+// the exact 1% lands in pesos instead of having to be converted from the EUR
+// account of the test wallet.
+const platformAddress = "app-cajadebarrio-cop"
+
+// clientKeyAddresses are the wallet addresses this backend acts as the resource
+// owner of, and therefore the ones its signing key has to be registered on.
+var clientKeyAddresses = []string{appAddress, platformAddress}
+
+// asset is one currency of the demo the seed provisions.
+type asset struct {
+	code string
+
+	// liquidity funds the asset for the demo, in its smallest unit: with scale 2
+	// this is 10.000.000 COP and 3.000,00 USD. The dollar target is about what the
+	// peso target is worth at the demo rate (USD 1 = COP 4.000), with margin, so a
+	// remittance always has room to move.
+	liquidity rafikiadmin.UInt64
+}
+
+var assets = []asset{
+	{code: assetCOP, liquidity: 1_000_000_000},
+	{code: assetUSD, liquidity: 300_000},
+}
+
+// actor is one wallet address the demo needs, in the currency it keeps.
 type actor struct {
 	address    string
 	publicName string
+	assetCode  string
 }
 
 var actors = []actor{
-	{address: "tienda-cajadebarrio", publicName: "Don Jaime - Tienda"},
-	{address: "laura-cajadebarrio", publicName: "Laura"},
-	{address: appAddress, publicName: "Caja de Barrio"},
+	{address: "tienda-cajadebarrio", publicName: "Don Jaime - Tienda", assetCode: assetCOP},
+	{address: "laura-cajadebarrio", publicName: "Laura", assetCode: assetCOP},
+	{address: appAddress, publicName: "Caja de Barrio", assetCode: assetCOP},
+	// The 1% of the platform is charged on its own address, so it is not mixed
+	// with the application identity.
+	{address: platformAddress, publicName: "Caja de Barrio - Comision", assetCode: assetCOP},
+	// Andres pays the remittance in dollars and Rosa withdraws it in pesos at the
+	// store: the contract (section 4) gives both the same USD address, so there is
+	// no separate rosa-* wallet address.
+	{address: "andres-cajadebarrio", publicName: "Andres", assetCode: assetUSD},
 }
 
 func main() {
@@ -85,18 +117,25 @@ func run() error {
 		return err
 	}
 
-	asset, err := client.EnsureAsset(ctx, assetCode, assetScale)
-	if err != nil {
-		return fmt.Errorf("ensuring the %s asset: %w", assetCode, err)
-	}
-	fmt.Printf("asset %s scale %d id %s\n", asset.Code, asset.Scale, asset.ID)
+	// Every wallet address belongs to an asset, and Rafiki refuses one whose asset
+	// does not exist, so the currencies come first.
+	currencies := make(map[string]rafikiadmin.Asset, len(assets))
+	for _, a := range assets {
+		asset, err := client.EnsureAsset(ctx, a.code, assetScale)
+		if err != nil {
+			return fmt.Errorf("ensuring the %s asset: %w", a.code, err)
+		}
 
-	// Without liquidity the ASE cannot move money, so no payment can complete.
-	deposited, err := client.EnsureAssetLiquidity(ctx, asset.ID, assetLiquidityTarget)
-	if err != nil {
-		return fmt.Errorf("ensuring the asset liquidity: %w", err)
+		// Without liquidity the ASE cannot move money, so no payment can complete.
+		deposited, err := client.EnsureAssetLiquidity(ctx, asset.ID, a.liquidity)
+		if err != nil {
+			return fmt.Errorf("ensuring the %s asset liquidity: %w", a.code, err)
+		}
+
+		currencies[a.code] = asset
+		fmt.Printf("asset %s scale %d id %s liquidity target %d deposited now %d\n",
+			asset.Code, asset.Scale, asset.ID, a.liquidity, deposited)
 	}
-	fmt.Printf("asset liquidity target %d, deposited now %d\n", assetLiquidityTarget, deposited)
 
 	// The tenant setting is what makes Rafiki compose and accept wallet address
 	// URLs in https while the stack itself keeps publishing plain http.
@@ -110,7 +149,7 @@ func run() error {
 		addressURL := walletAddressURL(base, a.address)
 
 		address, err := client.EnsureWalletAddress(ctx, rafikiadmin.CreateWalletAddressInput{
-			AssetID:    asset.ID,
+			AssetID:    currencies[a.assetCode].ID,
 			Address:    addressURL,
 			PublicName: a.publicName,
 			// Rafiki binds an idempotency key to the arguments of the first request
@@ -123,12 +162,12 @@ func run() error {
 			return fmt.Errorf("ensuring the wallet address %s: %w", addressURL, err)
 		}
 		addresses[a.address] = address
-		fmt.Printf("wallet address %s id %s %s\n", addressURL, address.ID, address.PublicName)
+		fmt.Printf("wallet address %s asset %s id %s %s\n", addressURL, a.assetCode, address.ID, address.PublicName)
 	}
 
 	// The client identity: the key that signs this backend's Open Payments
-	// requests, registered on the wallet address it acts as. Without it no signed
-	// request from this backend can be verified.
+	// requests, registered on every wallet address this backend acts as. Without it
+	// no signed request from this backend can be verified.
 	key, err := opkeys.LoadOrGenerate(cfg.OP.PrivateKeyPath)
 	if err != nil {
 		return fmt.Errorf("loading the Open Payments client key: %w", err)
@@ -139,18 +178,21 @@ func run() error {
 		kid = key.Kid()
 	}
 
-	app := addresses[appAddress]
-	if err := client.EnsureWalletAddressKey(ctx, rafikiadmin.CreateWalletAddressKeyInput{
-		WalletAddressID: app.ID,
-		JWK:             rafikiadmin.Ed25519JWK(kid, key.PublicKeyBase64()),
-		// The wallet address ID is part of the key on purpose: changing the
-		// published base creates a new wallet address, and the same kid has to be
-		// registered on it instead of being deduplicated against the old one.
-		IdempotencyKey: "client-key:" + kid + ":" + app.ID,
-	}); err != nil {
-		return fmt.Errorf("registering the client key %s: %w", kid, err)
+	for _, address := range clientKeyAddresses {
+		account := addresses[address]
+		if err := client.EnsureWalletAddressKey(ctx, rafikiadmin.CreateWalletAddressKeyInput{
+			WalletAddressID: account.ID,
+			JWK:             rafikiadmin.Ed25519JWK(kid, key.PublicKeyBase64()),
+			// The wallet address ID is part of the key on purpose: changing the
+			// published base creates a new wallet address, and the same kid has to be
+			// registered on it instead of being deduplicated against the old one.
+			IdempotencyKey: "client-key:" + kid + ":" + account.ID,
+		}); err != nil {
+			return fmt.Errorf("registering the client key %s on %s: %w", kid, address, err)
+		}
+		fmt.Printf("client key %s registered on %s\n", kid, account.Address)
 	}
-	fmt.Printf("client key %s registered on %s, private key at %s\n", kid, app.Address, cfg.OP.PrivateKeyPath)
+	fmt.Printf("client key %s, private key at %s\n", kid, cfg.OP.PrivateKeyPath)
 
 	return nil
 }
