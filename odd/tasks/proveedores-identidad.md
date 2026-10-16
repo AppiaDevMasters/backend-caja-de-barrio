@@ -127,6 +127,7 @@ superficie, que no conoce personas, tiendas, reservas ni pagos.
 | D3 | S7 | Paridad con la forma documentada, medida contra Python: notacion de floats, enteros exactos, el literal `-0`, escapes de control | `internal/didit` | `ffa93fa` |
 | V2 | — | Verificacion independiente y correccion de los defectos confirmados por medicion | ambos | `306f4fb`, `ffa93fa` |
 | V3 | S9,S10,S11 | `internal/api`: montaje de `/internal` con `Register` y `StripPrefix`, middleware `X-Servicio-Token` con comparacion en tiempo constante, envoltura `{error:{codigo,mensaje}}` y la tabla de veintiun codigos | `internal/api` | `c2624c5` |
+| V4 | S9,S10 | `internal/api`: cinco defectos que encontro la verificacion independiente, medidos antes de aceptarlos (la base pelada sin guard, los 404 y 405 del mux en texto plano, un codigo inventado que llegaba al agente, un `*Error` nil que hacia panic, y `Handler()` sin recortar la base) mas las pruebas que el verificador llamo debiles | `internal/api` | `dee2317` |
 
 La primera rebanada esta cerrada, verde y commiteada. Las tres tareas de codigo cierran
 con commit de unidad de trabajo en `main`, con las pruebas junto al comportamiento, y
@@ -331,7 +332,56 @@ pelado que el agente no puede convertir en una frase: se agrego `INTERNO` con 50
 **fuera de `Codes()`**, que sigue siendo el vocabulario del contrato. Su cuerpo lleva una
 frase generica y el detalle va al log, porque el agente le lee ese cuerpo a una persona y
 un error no clasificado puede llevar un host, una cadena de conexion o datos de alguien.
-Es la unica adicion y queda sujeta a revision.
+Es una de las dos adiciones: la segunda aparece en el `L10`, y las dos quedan sujetas a
+revision.
 
 Commiteado en `c2624c5`, con rutas nombradas y la guarda que aborta si queda preparado
 algun archivo ajeno.
+
+L10 (2026-10-16, verificacion independiente de la superficie `/internal` y **cinco
+defectos reales**, medidos antes de aceptarlos).
+
+La verificacion independiente (`gentle-ai-verify`) ataco el guard y el envoltorio y
+reporto ocho hallazgos. **Ninguno se acepto sin reproducirlo**, y esta vez la medicion
+**confirmo** en lugar de refutar: los cinco que eran de codigo se probaron con una prueba
+que falla primero, y los cinco pasaron de rojo a verde.
+
+1. **`/internal` pelado esquivaba el guard.** Medido: respondia `301 Moved Permanently`
+   con HTML y **sin token**, porque el 301 del mux ocurre antes de que corra el
+   middleware. No exponia ningun manejador, pero contradecia el "Sin el, `401`" del
+   contrato y era una peticion que llegaba a la superficie sin pasar el control. Ahora la
+   base pelada se registra por el mismo control.
+2. **Los 404 y 405 del propio mux salian en texto plano.** Medido: `404 page not found` y
+   `Method Not Allowed`, los dos `text/plain`. El contrato dice que **todo** 4xx y 5xx
+   lleva el cuerpo, y el agente no puede explicarle nada a una persona con texto pelado.
+   Un envoltorio de respuesta viste esas dos y deja pasar las demas sin tocarlas.
+3. **Un codigo que la tabla no lleva viajaba al agente verbatim**, y de ahi a una persona,
+   como un identificador que nadie puede buscar. `Fail` ahora rechaza un codigo que no
+   puede clasificar y responde el interno, dejando el inventado en el log.
+4. **Un `(*Error)(nil)` hacia panic.** Medido: `errors.As` devuelve verdadero con el
+   puntero nil y desreferenciarlo mata el proceso que responde toda la superficie.
+5. **`Handler()` devolvia la superficie sin recortar la base**, asi que quien la montara
+   por su cuenta obtenia 404 en todas las rutas.
+
+Dos consecuencias que hay que nombrar en vez de esconder: el 405 necesita un codigo que el
+contrato no fija, asi que **`METODO_NO_PERMITIDO` se suma a `INTERNO` fuera de `Codes()`**
+-- son **dos** adiciones, no una, y corrigen lo que decia el `L9` --; y el comentario de la
+comparacion del token afirmaba mas de lo que la comparacion hace, porque **el largo del
+token sigue siendo observable** por el tiempo. Es inherente a cualquier comparacion y se
+acepta: el largo lo elegimos nosotros, no un atacante.
+
+**Lo que NO se corrigio, y por que.** Un llamador que registre una ruta como
+`/internal/algo` en **su** mux esquiva el guard, porque en Go 1.22 un patron mas
+especifico gana sobre el subarbol que monta este paquete. No se puede impedir desde
+adentro, asi que queda documentado en `Handle` y se le pasa al par como requisito: las
+rutas se registran con `Handle`, nunca en el mux de afuera. Y el contrato dice que una
+decision de negocio que no es error responde 200, asi que un manejador que quiera eso usa
+`JSON` con 200 y **nunca** `Fail`: esta escrito en el comentario de `Error`.
+
+Las pruebas que el verificador llamo debiles quedaron reforzadas: el error de arranque se
+comprueba que nombre `SERVICIO_TOKEN`, la del envoltorio comprueba el estado y que los dos
+campos lleven algo, `Codes()` queda fijado en el orden del contrato, y el caso
+`snake_case` usa una estructura cuyos nombres en Go no son las claves JSON. **Cobertura
+de 90.2% a 91.4%**, once paquetes en verde.
+
+Commiteado en `dee2317`.
