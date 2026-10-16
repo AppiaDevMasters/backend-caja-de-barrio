@@ -212,10 +212,11 @@ func (s *Store) PublicarEfectivo(ctx context.Context, tiendaID string, montoCOP 
 	return libre, nil
 }
 
-// The two PostgreSQL error codes this package reads: a foreign key that points at
-// nothing is a store that does not exist, and a check that fails here is the rule
-// that the published cash covers what is reserved.
+// The PostgreSQL error codes this package reads: a foreign key that points at
+// nothing is a store that does not exist, a check that fails here is a rule of the
+// contract, and a unique that fails is something that was already registered.
 const (
 	pgForeignKeyViolation = "23503"
 	pgCheckViolation      = "23514"
+	pgUniqueViolation     = "23505"
 )

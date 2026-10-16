@@ -40,19 +40,11 @@ func TestTiendasCercanasAgainstADatabase(t *testing.T) {
 	)
 	today := time.Now().In(zonaBogota)
 
-	remove := func() {
-		if _, err := database.pool.Exec(ctx, "delete from efectivo_disponible where tienda_id like 'tst_%'"); err != nil {
-			t.Errorf("removing the test cash: %v", err)
-		}
-		if _, err := database.pool.Exec(ctx, "delete from tiendas where id like 'tst_%'"); err != nil {
-			t.Errorf("removing the test stores: %v", err)
-		}
-	}
-	remove()
+	limpiarDatosDePrueba(t, database, ctx)
 	// The removal is deferred HERE and not registered with t.Cleanup on purpose:
 	// cleanups run after the defers, so the pool of this test would already be
 	// closed and the test would leave its stores behind for the demo.
-	defer remove()
+	defer limpiarDatosDePrueba(t, database, ctx)
 
 	// Every store below is here to be included or excluded for exactly one reason:
 	// a, b and c qualify and their order is their distance; d has a level that
@@ -196,18 +188,10 @@ func TestTiendaYPublicarEfectivoAgainstADatabase(t *testing.T) {
 	// demo's day, and a test on another day would agree with a defect.
 	today := time.Now().In(zonaBogota)
 
-	remove := func() {
-		if _, err := database.pool.Exec(ctx, "delete from efectivo_disponible where tienda_id = $1", id); err != nil {
-			t.Errorf("removing the test cash: %v", err)
-		}
-		if _, err := database.pool.Exec(ctx, "delete from tiendas where id = $1", id); err != nil {
-			t.Errorf("removing the test store: %v", err)
-		}
-	}
-	remove()
+	limpiarDatosDePrueba(t, database, ctx)
 	// Deferred and not registered with t.Cleanup: cleanups run after the defers, so
 	// the pool would already be closed and the test would leave its store behind.
-	defer remove()
+	defer limpiarDatosDePrueba(t, database, ctx)
 
 	if _, err := database.pool.Exec(ctx, `
 		insert into tiendas (id, nombre, direccion, ubicacion, nivel, estado, wallet_address, whatsapp_tendero, nombre_tendero)

@@ -35,22 +35,10 @@ func TestReservarAgainstADatabase(t *testing.T) {
 	}
 
 	ahora := time.Now().In(zonaBogota)
-	remove := func() {
-		for _, statement := range []string{
-			"delete from reservas where id like 'tst_%'",
-			"delete from efectivo_disponible where tienda_id like 'tst_%'",
-			"delete from tiendas where id like 'tst_%'",
-			"delete from personas where id like 'tst_%'",
-		} {
-			if _, err := database.pool.Exec(ctx, statement); err != nil {
-				t.Errorf("cleaning the test data (%s): %v", statement, err)
-			}
-		}
-	}
-	remove()
+	limpiarDatosDePrueba(t, database, ctx)
 	// Deferred and not registered with t.Cleanup: cleanups run after the defers, so
 	// the pool would already be closed and the test would leave rows behind.
-	defer remove()
+	defer limpiarDatosDePrueba(t, database, ctx)
 
 	crearPersona(t, database, ctx, "tst_laura")
 	crearTienda(t, database, ctx, "tst_jaime", "comercio", "activa", 800_000, ahora)
@@ -227,20 +215,8 @@ func TestLiberarVencidasAgainstADatabase(t *testing.T) {
 	// the caller names, and a release that computes the day on its own can miss it
 	// when the demo's day and the UTC day are not the same day.
 	ahora := time.Date(2026, 10, 16, 20, 0, 0, 0, time.FixedZone("America/Bogota", -5*60*60))
-	remove := func() {
-		for _, statement := range []string{
-			"delete from reservas where id like 'tst_%'",
-			"delete from efectivo_disponible where tienda_id like 'tst_%'",
-			"delete from tiendas where id like 'tst_%'",
-			"delete from personas where id like 'tst_%'",
-		} {
-			if _, err := database.pool.Exec(ctx, statement); err != nil {
-				t.Errorf("cleaning the test data (%s): %v", statement, err)
-			}
-		}
-	}
-	remove()
-	defer remove()
+	limpiarDatosDePrueba(t, database, ctx)
+	defer limpiarDatosDePrueba(t, database, ctx)
 
 	crearPersona(t, database, ctx, "tst_laura")
 	crearTienda(t, database, ctx, "tst_vencimiento", "comercio", "activa", 500_000, ahora)
