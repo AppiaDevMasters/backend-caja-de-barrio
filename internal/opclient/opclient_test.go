@@ -821,3 +821,577 @@ func TestCreateIncomingPaymentsRequiresANonInteractiveGrant(t *testing.T) {
 		})
 	}
 }
+
+// interactiveGrant is the GNAP response of an authorization server that starts
+// an interaction: where the user approves and the finish key of the callback.
+func interactiveGrant(redirect, serverNonce, continueURI, continueToken string) string {
+	return fmt.Sprintf(`{"interact":{"redirect":%q,"finish":%q},"continue":{"access_token":{"value":%q},"uri":%q}}`,
+		redirect, serverNonce, continueToken, continueURI)
+}
+
+// The interactive half of the withdrawal (contract 8.2): the grant of
+// outgoing-payment that caps the cupo carries the debit limit in the smallest
+// unit of the client's own asset, an interval the caller builds, and a finish
+// block whose nonce travels back to the caller for the callback hash.
+func TestRequestOutgoingPaymentGrant(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	var mu sync.Mutex
+	var grantRequests []map[string]any
+	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("the grant request body is not JSON: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		grantRequests = append(grantRequests, body)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, interactiveGrant(
+			"https://wallet.example/grant-interactions/xyz",
+			"server-nonce-1",
+			"https://auth.example/continue/grant-1",
+			"PDP_continue_1",
+		))
+	}))
+	defer auth.Close()
+
+	resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, walletAddressDocument(
+			"https://"+r.Host+r.URL.Path,
+			auth.URL,
+			"https://"+r.Host+"/tenant",
+		))
+	}))
+	defer resource.Close()
+
+	clientWallet := httpsURL(resource) + "/laura-cajadebarrio"
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(resource) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	got, err := client.RequestOutgoingPaymentGrant(context.Background(), opclient.OutgoingPaymentGrantParams{
+		ClientWalletAddress: clientWallet,
+		DebitLimit:          1000000,
+		Interval:            "R/2026-10-16T00:00:00Z/P7D",
+		FinishURL:           "https://tunel.example/op/finish",
+		GrantID:             "gra_8f2a",
+	})
+	if err != nil {
+		t.Fatalf("RequestOutgoingPaymentGrant() returned an error: %v", err)
+	}
+
+	if len(grantRequests) != 1 {
+		t.Fatalf("the client auth server received %d grant requests, want 1", len(grantRequests))
+	}
+	request := grantRequests[0]
+
+	// One outgoing-payment access item, scoped to the client wallet, with the
+	// ceiling of the cupo already converted to the smallest unit of its asset.
+	item := grantAccess(t, request)
+	if item["type"] != "outgoing-payment" {
+		t.Errorf("grant access type = %v, want outgoing-payment", item["type"])
+	}
+	if fmt.Sprint(item["actions"]) != "[create read]" {
+		t.Errorf("grant access actions = %v, want [create read]", item["actions"])
+	}
+	if item["identifier"] != clientWallet {
+		t.Errorf("grant access identifier = %v, want %s", item["identifier"], clientWallet)
+	}
+	limits, ok := item["limits"].(map[string]any)
+	if !ok {
+		t.Fatalf("grant access has no limits: %v", item)
+	}
+	debit, ok := limits["debitAmount"].(map[string]any)
+	if !ok {
+		t.Fatalf("limits have no debitAmount: %v", limits)
+	}
+	if debit["value"] != "100000000" {
+		t.Errorf("debit value = %v, want 100000000 (1000000 pesos at scale 2)", debit["value"])
+	}
+	if debit["assetCode"] != "COP" || debit["assetScale"] != float64(2) {
+		t.Errorf("debit asset = %v, want COP at scale 2", debit)
+	}
+	if limits["interval"] != "R/2026-10-16T00:00:00Z/P7D" {
+		t.Errorf("limits interval = %v, want the interval the caller passed", limits["interval"])
+	}
+
+	// The finish block carries the redirect method, the URI built from the
+	// caller's grant id, and the nonce the caller keeps for the hash.
+	interact, ok := request["interact"].(map[string]any)
+	if !ok {
+		t.Fatalf("grant request has no interact block: %v", request)
+	}
+	finish, ok := interact["finish"].(map[string]any)
+	if !ok {
+		t.Fatalf("interact block has no finish: %v", interact)
+	}
+	if finish["method"] != "redirect" {
+		t.Errorf("finish method = %v, want redirect", finish["method"])
+	}
+	if finish["uri"] != "https://tunel.example/op/finish?grant_id=gra_8f2a" {
+		t.Errorf("finish uri = %v, want the finish URL with the caller's grant id", finish["uri"])
+	}
+	if finish["nonce"] != got.ClientNonce {
+		t.Errorf("finish nonce = %v, want the nonce returned to the caller", finish["nonce"])
+	}
+	if start, ok := interact["start"]; !ok || fmt.Sprint(start) != "[redirect]" {
+		t.Errorf("interact start = %v, want [redirect]", start)
+	}
+
+	// What comes back is everything the callback needs (contract 8.3).
+	want := opclient.OutgoingPaymentGrant{
+		ID:            "gra_8f2a",
+		RedirectURL:   "https://wallet.example/grant-interactions/xyz",
+		ContinueURI:   "https://auth.example/continue/grant-1",
+		ContinueToken: "PDP_continue_1",
+		ClientNonce:   got.ClientNonce,
+		ServerNonce:   "server-nonce-1",
+		AuthServer:    auth.URL,
+	}
+	if got != want {
+		t.Errorf("RequestOutgoingPaymentGrant() = %+v, want %+v", got, want)
+	}
+	if len(got.ClientNonce) < 32 {
+		t.Errorf("ClientNonce = %q, want at least 32 characters of random data", got.ClientNonce)
+	}
+}
+
+// The finish URL of the caller can already carry a query of its own, and the grant
+// id has to be added to it: concatenating by hand would produce a second "?" and
+// the wallet would come back to a URI the callback cannot read.
+func TestRequestOutgoingPaymentGrantKeepsAnExistingQueryOnTheFinishURL(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	var grantRequests []map[string]any
+	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("the grant request body is not JSON: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		grantRequests = append(grantRequests, body)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, interactiveGrant(
+			"https://wallet.example/grant-interactions/xyz",
+			"server-nonce-1",
+			"https://auth.example/continue/grant-1",
+			"PDP_continue_1",
+		))
+	}))
+	defer auth.Close()
+
+	resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, walletAddressDocument(
+			"https://"+r.Host+r.URL.Path,
+			auth.URL,
+			"https://"+r.Host+"/tenant",
+		))
+	}))
+	defer resource.Close()
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(resource) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	_, err = client.RequestOutgoingPaymentGrant(context.Background(), opclient.OutgoingPaymentGrantParams{
+		ClientWalletAddress: httpsURL(resource) + "/laura-cajadebarrio",
+		DebitLimit:          1000000,
+		Interval:            "R/2026-10-16T00:00:00Z/P7D",
+		FinishURL:           "https://tunel.example/op/finish?etapa=1",
+		GrantID:             "gra_8f2a",
+	})
+	if err != nil {
+		t.Fatalf("RequestOutgoingPaymentGrant() returned an error: %v", err)
+	}
+
+	if len(grantRequests) != 1 {
+		t.Fatalf("the client auth server received %d grant requests, want 1", len(grantRequests))
+	}
+	interact, ok := grantRequests[0]["interact"].(map[string]any)
+	if !ok {
+		t.Fatalf("grant request has no interact block: %v", grantRequests[0])
+	}
+	finish, ok := interact["finish"].(map[string]any)
+	if !ok {
+		t.Fatalf("interact block has no finish: %v", interact)
+	}
+	if finish["uri"] != "https://tunel.example/op/finish?etapa=1&grant_id=gra_8f2a" {
+		t.Errorf("finish uri = %v, want the caller's query kept and the grant id added to it", finish["uri"])
+	}
+}
+
+// The interactive half needs an interact block: a grant that comes back
+// without one stops the flow, naming the account, instead of returning a
+// callback nobody can finish.
+func TestRequestOutgoingPaymentGrantRejectsAGrantWithoutInteraction(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, nonInteractiveGrant("token-no-interactivo"))
+	}))
+	defer auth.Close()
+
+	resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, walletAddressDocument(
+			"https://"+r.Host+r.URL.Path,
+			auth.URL,
+			"https://"+r.Host+"/tenant",
+		))
+	}))
+	defer resource.Close()
+
+	clientWallet := httpsURL(resource) + "/laura-cajadebarrio"
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(resource) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	_, err = client.RequestOutgoingPaymentGrant(context.Background(), opclient.OutgoingPaymentGrantParams{
+		ClientWalletAddress: clientWallet,
+		DebitLimit:          1000000,
+		Interval:            "R/2026-10-16T00:00:00Z/P7D",
+		FinishURL:           "https://tunel.example/op/finish",
+		GrantID:             "gra_8f2a",
+	})
+	if err == nil {
+		t.Fatal("RequestOutgoingPaymentGrant() accepted a non-interactive grant, want an error")
+	}
+	if !strings.Contains(err.Error(), clientWallet) {
+		t.Errorf("error %q does not name the account %s", err, clientWallet)
+	}
+}
+
+// The callback continues the grant with the interact_ref the wallet sent back
+// (contract 8.3): the continuation carries that ref to the continue URI under
+// the continuation token, and comes back with the approved token.
+func TestContinueOutgoingPaymentGrant(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	var mu sync.Mutex
+	var interactRef string
+	var authorization string
+	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/continue/") {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("the continuation body is not JSON: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		interactRef, _ = body["interact_ref"].(string)
+		authorization = r.Header.Get("Authorization")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":{"access":[],"value":"PDP_aprobado_1","manage":"https://auth.example/token/abc","expires_in":600}}`)
+	}))
+	defer auth.Close()
+
+	resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the continuation must not resolve the wallet address again: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer resource.Close()
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(resource) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	got, err := client.ContinueOutgoingPaymentGrant(context.Background(), opclient.ContinueOutgoingPaymentGrantParams{
+		ClientWalletAddress: httpsURL(resource) + "/laura-cajadebarrio",
+		ContinueURI:         auth.URL + "/continue/grant-1",
+		ContinueToken:       "PDP_continue_1",
+		InteractRef:         "4f3c",
+	})
+	if err != nil {
+		t.Fatalf("ContinueOutgoingPaymentGrant() returned an error: %v", err)
+	}
+
+	mu.Lock()
+	ref, sent := interactRef, authorization
+	mu.Unlock()
+	if ref != "4f3c" {
+		t.Errorf("continuation interact_ref = %q, want 4f3c", ref)
+	}
+	if sent != "GNAP PDP_continue_1" {
+		t.Errorf("continuation authorization = %q, want the continuation token", sent)
+	}
+
+	want := opclient.AccessToken{Value: "PDP_aprobado_1", ManageURL: "https://auth.example/token/abc", ExpiresIn: 600}
+	if got != want {
+		t.Errorf("ContinueOutgoingPaymentGrant() = %+v, want %+v", got, want)
+	}
+}
+
+// The hash of the callback (contract 8.3) binds the two nonces, the interact_ref
+// and the authorization server URL; the expected value was computed by hand for
+// this tuple, so the formula is pinned and not just re-derived.
+func TestInteractiveHash(t *testing.T) {
+	got := opclient.InteractiveHash("client-nonce", "server-nonce", "4f3c", "https://auth.example.com")
+	// printf 'client-nonce\nserver-nonce\n4f3c\nhttps://auth.example.com' | \
+	//   openssl dgst -sha256 -binary | openssl base64
+	want := "zhNTMsPaclfUFaav77EheRiROt/MCwe3kcFQ0Gciz6A="
+	if got != want {
+		t.Errorf("InteractiveHash() = %q, want %q", got, want)
+	}
+
+	if !opclient.VerifyInteractiveHash("client-nonce", "server-nonce", "4f3c", "https://auth.example.com", want) {
+		t.Error("VerifyInteractiveHash() rejected the hash it computed for the same tuple")
+	}
+	if opclient.VerifyInteractiveHash("client-nonce", "server-nonce", "4f3c", "https://auth.example.com", "dGFtYXJlZA==") {
+		t.Error("VerifyInteractiveHash() accepted a tampered hash")
+	}
+	if opclient.VerifyInteractiveHash("otro-client-nonce", "server-nonce", "4f3c", "https://auth.example.com", want) {
+		t.Error("VerifyInteractiveHash() accepted a hash computed over another client nonce")
+	}
+}
+
+// Two nonces generated one after the other must differ: the callback hash is
+// only as strong as the unguessability of the client nonce.
+func TestNewNonce(t *testing.T) {
+	first, err := opclient.NewNonce()
+	if err != nil {
+		t.Fatalf("NewNonce() returned an error: %v", err)
+	}
+	second, err := opclient.NewNonce()
+	if err != nil {
+		t.Fatalf("NewNonce() returned an error: %v", err)
+	}
+	if first == second {
+		t.Errorf("NewNonce() returned the same value twice: %q", first)
+	}
+	if len(first) < 32 {
+		t.Errorf("NewNonce() = %q, want at least 32 characters of random data", first)
+	}
+}
+
+// Rotation (contract 8.7 step 2): the approved token is rotated around its
+// management URL, and the new token arrives with its own management URL.
+func TestRotateAccessToken(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	var mu sync.Mutex
+	var authorization string
+	manage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		authorization = r.Header.Get("Authorization")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		// The rotation answers with the token wrapped in access_token, unlike the
+		// continuation response, whose token is at the top level.
+		fmt.Fprint(w, `{"access_token":{"access":[],"value":"PDP_rotado_1","manage":"https://auth.example/token/abc-2","expires_in":600}}`)
+	}))
+	defer manage.Close()
+
+	resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the rotation must not resolve the wallet address: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer resource.Close()
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(resource) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	got, err := client.RotateAccessToken(context.Background(), manage.URL+"/token/abc-1", "PDP_aprobado_1")
+	if err != nil {
+		t.Fatalf("RotateAccessToken() returned an error: %v", err)
+	}
+
+	mu.Lock()
+	sent := authorization
+	mu.Unlock()
+	if sent != "GNAP PDP_aprobado_1" {
+		t.Errorf("rotation authorization = %q, want the token being rotated", sent)
+	}
+
+	want := opclient.AccessToken{Value: "PDP_rotado_1", ManageURL: "https://auth.example/token/abc-2", ExpiresIn: 600}
+	if got != want {
+		t.Errorf("RotateAccessToken() = %+v, want %+v", got, want)
+	}
+}
+
+// Every parameter of the interactive half is validated before any network call
+// happens, and the error names the parameter that is wrong.
+func TestInteractiveGrantsRejectParamsTheyCannotUse(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	// The stub fails the test if it is ever reached: validation happens before
+	// the network, not at the first response.
+	resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("a request went out before the parameters were validated: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer resource.Close()
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(resource) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	wallet := httpsURL(resource) + "/laura-cajadebarrio"
+	continueURI := "https://auth.example/continue/grant-1"
+
+	grantParams := func(mutate func(*opclient.OutgoingPaymentGrantParams)) opclient.OutgoingPaymentGrantParams {
+		params := opclient.OutgoingPaymentGrantParams{
+			ClientWalletAddress: wallet,
+			DebitLimit:          1000000,
+			Interval:            "R/2026-10-16T00:00:00Z/P7D",
+			FinishURL:           "https://tunel.example/op/finish",
+			GrantID:             "gra_8f2a",
+		}
+		mutate(&params)
+		return params
+	}
+	continueParams := func(mutate func(*opclient.ContinueOutgoingPaymentGrantParams)) opclient.ContinueOutgoingPaymentGrantParams {
+		params := opclient.ContinueOutgoingPaymentGrantParams{
+			ClientWalletAddress: wallet,
+			ContinueURI:         continueURI,
+			ContinueToken:       "PDP_continue_1",
+			InteractRef:         "4f3c",
+		}
+		mutate(&params)
+		return params
+	}
+
+	tests := []struct {
+		name string
+		call func() error
+		want string
+	}{
+		{
+			name: "grant: no client wallet address",
+			call: func() error {
+				_, err := client.RequestOutgoingPaymentGrant(context.Background(), grantParams(func(p *opclient.OutgoingPaymentGrantParams) { p.ClientWalletAddress = "" }))
+				return err
+			},
+			want: "ClientWalletAddress",
+		},
+		{
+			name: "grant: zero debit limit",
+			call: func() error {
+				_, err := client.RequestOutgoingPaymentGrant(context.Background(), grantParams(func(p *opclient.OutgoingPaymentGrantParams) { p.DebitLimit = 0 }))
+				return err
+			},
+			want: "DebitLimit",
+		},
+		{
+			name: "grant: no interval",
+			call: func() error {
+				_, err := client.RequestOutgoingPaymentGrant(context.Background(), grantParams(func(p *opclient.OutgoingPaymentGrantParams) { p.Interval = "" }))
+				return err
+			},
+			want: "Interval",
+		},
+		{
+			name: "grant: finish URL without a host",
+			call: func() error {
+				_, err := client.RequestOutgoingPaymentGrant(context.Background(), grantParams(func(p *opclient.OutgoingPaymentGrantParams) { p.FinishURL = "/op/finish" }))
+				return err
+			},
+			want: "FinishURL",
+		},
+		{
+			name: "grant: grant id that cannot travel inside the finish URI",
+			call: func() error {
+				_, err := client.RequestOutgoingPaymentGrant(context.Background(), grantParams(func(p *opclient.OutgoingPaymentGrantParams) { p.GrantID = "gra 8f2a&x=1" }))
+				return err
+			},
+			want: "GrantID",
+		},
+		{
+			name: "grant: no grant id",
+			call: func() error {
+				_, err := client.RequestOutgoingPaymentGrant(context.Background(), grantParams(func(p *opclient.OutgoingPaymentGrantParams) { p.GrantID = "" }))
+				return err
+			},
+			want: "GrantID",
+		},
+		{
+			name: "continue: no client wallet address",
+			call: func() error {
+				_, err := client.ContinueOutgoingPaymentGrant(context.Background(), continueParams(func(p *opclient.ContinueOutgoingPaymentGrantParams) { p.ClientWalletAddress = "" }))
+				return err
+			},
+			want: "ClientWalletAddress",
+		},
+		{
+			name: "continue: URI that is not a continue URI",
+			call: func() error {
+				_, err := client.ContinueOutgoingPaymentGrant(context.Background(), continueParams(func(p *opclient.ContinueOutgoingPaymentGrantParams) { p.ContinueURI = "https://auth.example/token/abc" }))
+				return err
+			},
+			want: "ContinueURI",
+		},
+		{
+			name: "continue: no continuation token",
+			call: func() error {
+				_, err := client.ContinueOutgoingPaymentGrant(context.Background(), continueParams(func(p *opclient.ContinueOutgoingPaymentGrantParams) { p.ContinueToken = "" }))
+				return err
+			},
+			want: "ContinueToken",
+		},
+		{
+			name: "continue: no interact ref",
+			call: func() error {
+				_, err := client.ContinueOutgoingPaymentGrant(context.Background(), continueParams(func(p *opclient.ContinueOutgoingPaymentGrantParams) { p.InteractRef = "" }))
+				return err
+			},
+			want: "InteractRef",
+		},
+		{
+			name: "rotate: no manage URL",
+			call: func() error {
+				_, err := client.RotateAccessToken(context.Background(), "", "PDP_aprobado_1")
+				return err
+			},
+			want: "manageURL",
+		},
+		{
+			name: "rotate: URL that is not a token URL",
+			call: func() error {
+				_, err := client.RotateAccessToken(context.Background(), "https://auth.example/continue/grant-1", "PDP_aprobado_1")
+				return err
+			},
+			want: "manageURL",
+		},
+		{
+			name: "rotate: no access token",
+			call: func() error {
+				_, err := client.RotateAccessToken(context.Background(), "https://auth.example/token/abc", "")
+				return err
+			},
+			want: "accessToken",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.call()
+			if err == nil {
+				t.Fatal("the call accepted params it cannot use, want an error")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Errorf("error %q does not name %s", err, test.want)
+			}
+		})
+	}
+}

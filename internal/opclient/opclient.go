@@ -9,6 +9,10 @@ package opclient
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -570,6 +574,364 @@ func validateReceiverParam(name, receiver string) error {
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
 		return fmt.Errorf("opclient: %s=%q is not the URL of an incoming payment", name, receiver)
+	}
+	return nil
+}
+
+// OutgoingPaymentGrantParams names the interactive grant of the cupo (contract
+// 8.2): one grant of outgoing-payment that caps what the client wallet can
+// debit, in whole units of the client's own asset, so the caller picks the
+// ceiling the contract fixes (COP 1.000.000 or USD 300).
+type OutgoingPaymentGrantParams struct {
+	// ClientWalletAddress is the wallet the cupo is granted on. It scopes the
+	// access item and names the asset the debit limit is converted into.
+	ClientWalletAddress string
+
+	// DebitLimit is the ceiling of the cupo in whole units of the client's own
+	// asset: the caller decides which contract ceiling applies.
+	DebitLimit int64
+
+	// Interval is the GNAP repeating interval of the cupo, for example
+	// R/2026-10-16T00:00:00Z/P7D. The caller builds it, because it depends on
+	// the day the cupo is granted.
+	Interval string
+
+	// FinishURL is where the wallet sends the user back. The grant id of the
+	// caller is appended as a query parameter, so the callback can be matched
+	// to the cupo it belongs to.
+	FinishURL string
+
+	// GrantID is the caller's own identifier of the cupo; the finish URI carries
+	// it so the callback can find the grant it continues.
+	GrantID string
+}
+
+// OutgoingPaymentGrant is everything the callback needs to finish an interactive
+// grant (contract 8.3): where the user approves, how to continue the grant, and
+// the two nonces the callback hash binds.
+type OutgoingPaymentGrant struct {
+	// ID is the caller's grant id, echoed back so the cupo can be stored under
+	// it before the callback arrives.
+	ID string
+
+	// RedirectURL is where the caller sends the user to approve the grant.
+	RedirectURL string
+
+	// ContinueURI and ContinueToken identify and authorize the continuation
+	// request the callback makes with the interact_ref of the wallet.
+	ContinueURI   string
+	ContinueToken string
+
+	// ClientNonce is the nonce this client generated for the finish block; the
+	// caller keeps it to verify the callback hash. ServerNonce is the finish key
+	// the authorization server answered with; both go into the hash.
+	ClientNonce string
+	ServerNonce string
+
+	// AuthServer is the authorization server the grant was asked of; the hash
+	// binds it, and the callback verifies against the same URL.
+	AuthServer string
+}
+
+// RequestOutgoingPaymentGrant asks the client wallet's authorization server for
+// an interactive grant of outgoing-payment (contract 8.2): the access item is
+// scoped to the client's wallet address, the debit limit travels in the
+// smallest unit of its asset next to the interval of the cupo, and the finish
+// block sends the user back to the caller's finish URL with the grant id.
+func (c *Client) RequestOutgoingPaymentGrant(ctx context.Context, params OutgoingPaymentGrantParams) (OutgoingPaymentGrant, error) {
+	// Everything is validated before the wallet address is even resolved, so a
+	// bad parameter cannot leave a half-asked grant behind.
+	clientWallet, err := validateWalletAddressParam("ClientWalletAddress", params.ClientWalletAddress)
+	if err != nil {
+		return OutgoingPaymentGrant{}, err
+	}
+	if params.DebitLimit <= 0 {
+		return OutgoingPaymentGrant{}, fmt.Errorf("opclient: DebitLimit must be a positive amount in whole units of the client's asset, got %d", params.DebitLimit)
+	}
+	if strings.TrimSpace(params.Interval) == "" {
+		return OutgoingPaymentGrant{}, errors.New("opclient: Interval is empty")
+	}
+	finishURL, err := validateFinishURLParam(params.FinishURL)
+	if err != nil {
+		return OutgoingPaymentGrant{}, err
+	}
+	grantID, err := validateGrantIDParam(params.GrantID)
+	if err != nil {
+		return OutgoingPaymentGrant{}, err
+	}
+
+	address, err := c.ResolveWalletAddress(ctx, clientWallet)
+	if err != nil {
+		return OutgoingPaymentGrant{}, fmt.Errorf("opclient: the client: %w", err)
+	}
+
+	value, err := SmallestUnit(params.DebitLimit, address.AssetScale)
+	if err != nil {
+		return OutgoingPaymentGrant{}, fmt.Errorf("opclient: DebitLimit: %w", err)
+	}
+
+	// The client nonce is generated here and returned to the caller, because the
+	// callback hash (contract 8.3) binds it and nobody else has it.
+	clientNonce, err := NewNonce()
+	if err != nil {
+		return OutgoingPaymentGrant{}, fmt.Errorf("opclient: generating the client nonce: %w", err)
+	}
+
+	// The grant id of the caller travels in the finish URI, so the wallet's
+	// callback can be matched to the cupo it belongs to (contract 8.2).
+	finishURI, err := addGrantIDToURL(finishURL, grantID)
+	if err != nil {
+		return OutgoingPaymentGrant{}, err
+	}
+
+	identifier := clientWallet
+	interval := params.Interval
+	var limits as.LimitsOutgoing
+	if err := limits.FromLimitsOutgoingDebitAmount(as.LimitsOutgoingDebitAmount{
+		DebitAmount: as.Amount{AssetCode: address.AssetCode, AssetScale: address.AssetScale, Value: value},
+		Interval:    &interval,
+	}); err != nil {
+		return OutgoingPaymentGrant{}, fmt.Errorf("opclient: building the debit limit of the cupo: %w", err)
+	}
+
+	var item as.AccessItem
+	if err := item.FromAccessOutgoing(as.AccessOutgoing{
+		Type:       as.OutgoingPayment,
+		Actions:    []as.AccessOutgoingActions{as.AccessOutgoingActionsCreate, as.AccessOutgoingActionsRead},
+		Identifier: identifier,
+		Limits:     &limits,
+	}); err != nil {
+		return OutgoingPaymentGrant{}, fmt.Errorf("opclient: building the outgoing-payment access of the client: %w", err)
+	}
+
+	var body as.GrantRequest
+	if err := body.FromGrantRequestWithAccessToken(as.GrantRequestWithAccessToken{
+		AccessToken: as.AccessTokenRequest{Access: as.Access{item}},
+		Interact: &as.InteractRequest{
+			Finish: &struct {
+				Method as.InteractRequestFinishMethod `json:"method"`
+				Nonce  string                         `json:"nonce"`
+				Uri    string                         `json:"uri"`
+			}{Method: as.InteractRequestFinishMethodRedirect, Nonce: clientNonce, Uri: finishURI},
+			Start: []as.InteractRequestStart{as.InteractRequestStartRedirect},
+		},
+	}); err != nil {
+		return OutgoingPaymentGrant{}, fmt.Errorf("opclient: building the interactive grant request of the client: %w", err)
+	}
+
+	grant, err := c.sdk.Grant.Request(ctx, openpayments.GrantRequestParams{URL: address.AuthServer, RequestBody: body})
+	if err != nil {
+		return OutgoingPaymentGrant{}, fmt.Errorf("opclient: requesting the interactive grant of the client at %s: %w", address.AuthServer, err)
+	}
+
+	// The mirror of requestGrant: the collection needs a non-interactive grant,
+	// and the cupo needs an interactive one. Without an interact block there is
+	// nothing to send the user to and nothing to continue.
+	if grant.Interact == nil {
+		return OutgoingPaymentGrant{}, fmt.Errorf("opclient: the auth server of the client (%s) answered without an interactive grant, and the cupo needs one", clientWallet)
+	}
+	if grant.Interact.Redirect == "" || grant.Interact.Finish == "" {
+		return OutgoingPaymentGrant{}, fmt.Errorf("opclient: the auth server of the client (%s) answered an interactive grant without a redirect or finish key", clientWallet)
+	}
+	if grant.Continue.Uri == "" || grant.Continue.AccessToken.Value == "" {
+		return OutgoingPaymentGrant{}, fmt.Errorf("opclient: the auth server of the client (%s) answered an interactive grant without a continuation", clientWallet)
+	}
+
+	return OutgoingPaymentGrant{
+		ID:            grantID,
+		RedirectURL:   grant.Interact.Redirect,
+		ContinueURI:   grant.Continue.Uri,
+		ContinueToken: grant.Continue.AccessToken.Value,
+		ClientNonce:   clientNonce,
+		ServerNonce:   grant.Interact.Finish,
+		AuthServer:    address.AuthServer,
+	}, nil
+}
+
+// ContinueOutgoingPaymentGrantParams names the continuation of one interactive
+// grant (contract 8.3): what the callback received from the wallet, plus the
+// client wallet the grant was asked for.
+type ContinueOutgoingPaymentGrantParams struct {
+	ClientWalletAddress string
+	ContinueURI         string
+	ContinueToken       string
+	InteractRef         string
+}
+
+// AccessToken is one access token of a grant: the value the resource server
+// accepts, the management URL it rotates around, and how long it lives.
+type AccessToken struct {
+	Value     string
+	ManageURL string
+	ExpiresIn int
+}
+
+// ContinueOutgoingPaymentGrant continues an interactive grant with the
+// interact_ref the wallet sent back (contract 8.3) and returns the approved
+// access token, with its management URL for the rotations that follow.
+func (c *Client) ContinueOutgoingPaymentGrant(ctx context.Context, params ContinueOutgoingPaymentGrantParams) (AccessToken, error) {
+	if _, err := validateWalletAddressParam("ClientWalletAddress", params.ClientWalletAddress); err != nil {
+		return AccessToken{}, err
+	}
+	if err := validateContinueURIParam("ContinueURI", params.ContinueURI); err != nil {
+		return AccessToken{}, err
+	}
+	if strings.TrimSpace(params.ContinueToken) == "" {
+		return AccessToken{}, errors.New("opclient: ContinueToken is empty")
+	}
+	if strings.TrimSpace(params.InteractRef) == "" {
+		return AccessToken{}, errors.New("opclient: InteractRef is empty")
+	}
+
+	grant, err := c.sdk.Grant.Continue(ctx, openpayments.GrantContinueParams{URL: params.ContinueURI, AccessToken: params.ContinueToken, InteractRef: params.InteractRef})
+	if err != nil {
+		return AccessToken{}, fmt.Errorf("opclient: continuing the grant of the client at %s: %w", params.ContinueURI, err)
+	}
+	if grant.AccessToken == nil || grant.AccessToken.Value == "" {
+		return AccessToken{}, errors.New("opclient: the auth server of the client answered the continuation without an access token")
+	}
+
+	return toAccessToken(*grant.AccessToken), nil
+}
+
+// RotateAccessToken rotates an approved access token around the management URL
+// its grant returned (contract 8.7 rotates after every payment). The old token
+// is dead once this returns, so the caller stores the new one.
+func (c *Client) RotateAccessToken(ctx context.Context, manageURL, accessToken string) (AccessToken, error) {
+	if err := validateTokenURLParam("manageURL", manageURL); err != nil {
+		return AccessToken{}, err
+	}
+	if strings.TrimSpace(accessToken) == "" {
+		return AccessToken{}, errors.New("opclient: accessToken is empty")
+	}
+
+	rotated, err := c.sdk.Token.Rotate(ctx, openpayments.TokenRotateParams{URL: manageURL, AccessToken: accessToken})
+	if err != nil {
+		return AccessToken{}, fmt.Errorf("opclient: rotating the access token at %s: %w", manageURL, err)
+	}
+	if rotated.Value == "" {
+		return AccessToken{}, fmt.Errorf("opclient: the auth server at %s answered the rotation without an access token", manageURL)
+	}
+
+	return toAccessToken(rotated), nil
+}
+
+// toAccessToken reduces the token of the auth server to what the callers keep:
+// the value, where it rotates and for how long. A token without an expiry is
+// kept with zero, because the servers of the ASE always send one and the
+// callers treat zero as unknown rather than eternal.
+func toAccessToken(token as.AccessToken) AccessToken {
+	expiresIn := 0
+	if token.ExpiresIn != nil {
+		expiresIn = *token.ExpiresIn
+	}
+	return AccessToken{Value: token.Value, ManageURL: token.Manage, ExpiresIn: expiresIn}
+}
+
+// InteractiveHash computes the hash of the callback of an interactive grant
+// (contract 8.3): base64 of the SHA-256 over the client nonce, the server
+// nonce, the interact ref and the authorization server URL, joined by newlines.
+// The base64 is the standard alphabet, which is what Rafiki's auth server signs.
+func InteractiveHash(clientNonce, serverNonce, interactRef, authServerURL string) string {
+	digest := sha256.Sum256([]byte(clientNonce + "\n" + serverNonce + "\n" + interactRef + "\n" + authServerURL))
+	return base64.StdEncoding.EncodeToString(digest[:])
+}
+
+// VerifyInteractiveHash verifies a callback hash in constant time (contract
+// 8.3). A comparison that leaks where the first difference is would let an
+// attacker forge the hash of a callback byte by byte, so it cannot be a plain
+// string comparison.
+func VerifyInteractiveHash(clientNonce, serverNonce, interactRef, authServerURL, received string) bool {
+	expected := InteractiveHash(clientNonce, serverNonce, interactRef, authServerURL)
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(received)) == 1
+}
+
+// NewNonce generates an unguessable client nonce for a finish block: at least
+// 32 bytes of crypto randomness, base64url encoded. An attacker who could guess
+// it could forge the hash of a callback, so mathrand is not enough.
+func NewNonce() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("opclient: reading random bytes for the nonce: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(bytes), nil
+}
+
+// validateFinishURLParam checks the URL the wallet sends the user back to; the
+// grant id is appended as its query, so it has to be a URL with a host.
+func validateFinishURLParam(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", errors.New("opclient: FinishURL is empty")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return "", fmt.Errorf("opclient: FinishURL=%q is not the URL the wallet can send the user back to", raw)
+	}
+	return trimmed, nil
+}
+
+// validateGrantIDParam checks the caller's identifier of a cupo. It travels both
+// inside the finish URI the wallet opens and as a query parameter the callback
+// reads back, so it is limited to the characters that cannot change the URI it is
+// embedded in.
+func validateGrantIDParam(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", errors.New("opclient: GrantID is empty")
+	}
+
+	for _, character := range trimmed {
+		safe := character == '_' || character == '-' ||
+			(character >= '0' && character <= '9') ||
+			(character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z')
+		if !safe {
+			return "", fmt.Errorf("opclient: GrantID=%q carries %q, which cannot travel in the finish URI", raw, character)
+		}
+	}
+
+	return trimmed, nil
+}
+
+// addGrantIDToURL adds the grant id to the finish URL as one more query parameter.
+// Concatenating it by hand would produce a second "?" when the finish URL already
+// carries a query, and the wallet would come back to a URI the callback cannot read.
+func addGrantIDToURL(finishURL, grantID string) (string, error) {
+	parsed, err := url.Parse(finishURL)
+	if err != nil {
+		return "", fmt.Errorf("opclient: FinishURL=%q is not a URL: %w", finishURL, err)
+	}
+
+	query := parsed.Query()
+	query.Set("grant_id", grantID)
+	parsed.RawQuery = query.Encode()
+
+	return parsed.String(), nil
+}
+
+// validateContinueURIParam checks a URI that continues or manages a grant. The
+// SDK refuses a continuation URL without continue/ and a management URL without
+// token/, and both are refused here, before any network call, so the error
+// names the parameter of the caller instead of an SDK message.
+func validateContinueURIParam(name, raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fmt.Errorf("opclient: %s is empty", name)
+	}
+	if !strings.Contains(trimmed, "continue/") {
+		return fmt.Errorf("opclient: %s=%q is not the URI that continues a grant", name, raw)
+	}
+	return nil
+}
+
+func validateTokenURLParam(name, raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fmt.Errorf("opclient: %s is empty", name)
+	}
+	if !strings.Contains(trimmed, "token/") {
+		return fmt.Errorf("opclient: %s=%q is not the URL that manages an access token", name, raw)
 	}
 	return nil
 }
