@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/api"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/opclient"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/store"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/verifik"
 )
@@ -39,6 +40,8 @@ type Datos interface {
 	ElegibilidadDe(ctx context.Context, personaID, versionPoliticas string, ahora time.Time) (store.Elegibilidad, error)
 	CupoDe(ctx context.Context, personaID string) (store.Cupo, bool, error)
 	AceptarPoliticas(ctx context.Context, id, whatsapp, version, textoUsuario string) error
+	PoliticasAceptadas(ctx context.Context, whatsapp, versionPoliticas string) (bool, error)
+	CrearPersona(ctx context.Context, persona store.Persona) error
 }
 
 // Cedulas is the civil registry client this package needs (5.3), as an interface so
@@ -51,11 +54,28 @@ type Cedulas interface {
 	VerifyDocument(ctx context.Context, documentType, documentNumber string) (verifik.Document, error)
 }
 
+// Carteras resolves a wallet address, which is what 5.4 asks for before registering a
+// person: a wallet that does not resolve is a wallet this backend will not be able to
+// pay later, so registering her would create an account the flow can never use.
+type Carteras interface {
+	ResolveWalletAddress(ctx context.Context, walletAddressURL string) (opclient.WalletAddress, error)
+}
+
+// Dependencias is what the identity routes need from the rest of the system. It is a
+// struct and not four parameters because the fourth one (Didit, for 5.5) is already on
+// its way, and a list of nils at a call site is how wiring mistakes happen.
+type Dependencias struct {
+	Datos    Datos
+	Cedulas  Cedulas
+	Carteras Carteras
+}
+
 // Register adds the identity routes to the surface.
-func Register(server *api.Server, datos Datos, cedulas Cedulas) {
-	server.Handle("GET /identidad/personas", quienEscribe(datos))
-	server.Handle("POST /identidad/politicas/aceptaciones", aceptarPoliticas(datos))
-	server.Handle("POST /identidad/cedulas/verificar", verificarCedula(cedulas))
+func Register(server *api.Server, deps Dependencias) {
+	server.Handle("GET /identidad/personas", quienEscribe(deps.Datos))
+	server.Handle("POST /identidad/politicas/aceptaciones", aceptarPoliticas(deps.Datos))
+	server.Handle("POST /identidad/cedulas/verificar", verificarCedula(deps.Cedulas))
+	server.Handle("POST /identidad/personas", crearPersona(deps))
 }
 
 // quienEscribeBody is the answer of 5.1 for the person the number belongs to.
@@ -274,6 +294,135 @@ func verificarCedula(cedulas Cedulas) http.HandlerFunc {
 			"nombre_completo": documento.FullName,
 		})
 	}
+}
+
+// crearPersonaBody is the request of 5.4.
+type crearPersonaBody struct {
+	Whatsapp      string `json:"whatsapp"`
+	Tipo          string `json:"tipo"`
+	Numero        string `json:"numero"`
+	WalletAddress string `json:"wallet_address"`
+}
+
+// crearPersona answers 5.4: it registers a person.
+//
+// The NAME COMES FROM THE REGISTRY and not from the caller: the chat cannot be trusted
+// with the name that goes next to an identity document, and the document was validated
+// one call before.
+//
+// The order of the checks is the contract's: the policies first (nobody operates without
+// accepting them), then the document, then the wallet -- which has to be one this
+// backend can resolve, or the flow will never be able to pay her -- and finally the
+// registration itself.
+func crearPersona(deps Dependencias) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.Cedulas == nil || deps.Carteras == nil {
+			api.Fail(w, api.Errorf(api.CodeInterno, "El registro de personas no está configurado."))
+
+			return
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+
+		var body crearPersonaBody
+		if err := decoder.Decode(&body); err != nil {
+			api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "El cuerpo de la petición no es válido: se espera {whatsapp, tipo, numero, wallet_address}."))
+
+			return
+		}
+
+		whatsapp := strings.TrimSpace(body.Whatsapp)
+		wallet := walletAddressURL(body.WalletAddress)
+		if whatsapp == "" || wallet == "" {
+			api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "Faltan el whatsapp o la wallet address."))
+
+			return
+		}
+
+		aceptadas, err := deps.Datos.PoliticasAceptadas(r.Context(), whatsapp, VersionPoliticas)
+		if err != nil {
+			api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo registrar a la persona."))
+
+			return
+		}
+		if !aceptadas {
+			api.Fail(w, api.Errorf(api.CodeSinPoliticas, fmt.Sprintf("Primero hay que aceptar las políticas %s.", VersionPoliticas)))
+
+			return
+		}
+
+		documento, err := deps.Cedulas.VerifyDocument(r.Context(), body.Tipo, body.Numero)
+		switch {
+		case errors.Is(err, verifik.ErrInvalidDocument):
+			api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "El tipo o el número de la cédula no tienen el formato esperado."))
+
+			return
+		case err != nil:
+			api.Fail(w, api.Errorf(api.CodeProveedor, "No se pudo validar la cédula con el proveedor."))
+
+			return
+		}
+		if !documento.Valid {
+			// The registry does not know the document, so there is nobody to register. The
+			// contract fixes no code for this one and DATOS_INVALIDOS is the closest: what is
+			// wrong is what the caller sent.
+			api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "La cédula no aparece en el registro civil."))
+
+			return
+		}
+
+		if _, err := deps.Carteras.ResolveWalletAddress(r.Context(), wallet); err != nil {
+			api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "No se pudo resolver la wallet address."))
+
+			return
+		}
+
+		id, err := nuevoID("per_")
+		if err != nil {
+			api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo registrar a la persona."))
+
+			return
+		}
+
+		persona := store.Persona{
+			ID:             id,
+			Whatsapp:       whatsapp,
+			Cedula:         strings.TrimSpace(body.Numero),
+			Nombre:         documento.FullName,
+			WalletAddress:  wallet,
+			Nivel:          1,
+			EstadoRegistro: "verificando",
+		}
+		if err := deps.Datos.CrearPersona(r.Context(), persona); err != nil {
+			if errors.Is(err, store.ErrYaRegistrada) {
+				api.Fail(w, api.Errorf(api.CodeYaRegistrada, "Ese WhatsApp ya está registrado."))
+
+				return
+			}
+
+			api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo registrar a la persona."))
+
+			return
+		}
+
+		api.JSON(w, http.StatusCreated, map[string]any{
+			"persona_id":      persona.ID,
+			"estado_registro": persona.EstadoRegistro,
+		})
+	}
+}
+
+// walletAddressURL turns the shorthand the contract writes into the URL the client
+// resolves: $ilp.example.com/x is the same wallet address as https://ilp.example.com/x,
+// and the SDK only takes the URL.
+func walletAddressURL(walletAddress string) string {
+	trimmed := strings.TrimSpace(walletAddress)
+	if strings.HasPrefix(trimmed, "$") {
+		return "https://" + strings.TrimPrefix(trimmed, "$")
+	}
+
+	return trimmed
 }
 
 // nuevoID mints one identifier with the readable prefix the contract suggests. It

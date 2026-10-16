@@ -116,6 +116,7 @@ func TestLoadDefaultsTheOpenPaymentsURL(t *testing.T) {
 }
 
 func TestLoadReadsTheOpenPaymentsClientSettings(t *testing.T) {
+	t.Setenv("OP_CLIENT_WALLET_ADDRESS", "https://ase.example:3000/laura-cajadebarrio")
 	t.Setenv("OP_KEY_ID", "mi-llave")
 	t.Setenv("OP_PRIVATE_KEY_PATH", "/ruta/clave.pem")
 
@@ -123,9 +124,25 @@ func TestLoadReadsTheOpenPaymentsClientSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() returned an error: %v", err)
 	}
-	want := config.OP{KeyID: "mi-llave", PrivateKeyPath: "/ruta/clave.pem"}
+	want := config.OP{ClientWalletAddress: "https://ase.example:3000/laura-cajadebarrio", KeyID: "mi-llave", PrivateKeyPath: "/ruta/clave.pem"}
 	if cfg.OP != want {
 		t.Errorf("OP = %+v, want %+v", cfg.OP, want)
+	}
+}
+
+// The wallet address of the client is the published base plus the application's account
+// when nobody names it, because that is the name the seed registers the key on:
+// deriving it keeps the two from drifting apart when the base changes.
+func TestLoadDerivesTheClientWalletAddressFromThePublishedBase(t *testing.T) {
+	t.Setenv("OP_CLIENT_WALLET_ADDRESS", "")
+	t.Setenv("RAFIKI_OPEN_PAYMENTS_URL", "https://ase.example:3000/")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() returned an error: %v", err)
+	}
+	if want := "https://ase.example:3000/app-cajadebarrio"; cfg.OP.ClientWalletAddress != want {
+		t.Errorf("ClientWalletAddress = %q, want %q", cfg.OP.ClientWalletAddress, want)
 	}
 }
 

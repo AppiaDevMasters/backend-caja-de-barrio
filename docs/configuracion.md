@@ -39,6 +39,7 @@ es el que lo reporta faltante.
 
 | Variable | Por defecto | Que es |
 | --- | --- | --- |
+| `OP_CLIENT_WALLET_ADDRESS` | la base publica mas `/app-cajadebarrio` | La wallet address de este backend: la identidad con la que firma y con la que resuelve la de los demas (la validacion de `5.4`). Vacia se **deriva** de `RAFIKI_OPEN_PAYMENTS_URL`, que es el nombre con el que el seed registra la clave, para que los dos no se separen al cambiar la base. |
 | `OP_KEY_ID` | vacio | Nombre con el que se registra la clave. Vacio significa que la clave se nombra con la huella RFC 7638 de su clave publica. |
 | `OP_PRIVATE_KEY_PATH` | `keys/op-private-key.pem` | Clave privada Ed25519 del cliente. Debe ser la **misma** cuyo JWK registro el seed: si el proceso generara otra, el JWK de la wallet address dejaria de verificar las peticiones firmadas. El archivo esta cubierto por `*.pem` del `.gitignore`. |
 

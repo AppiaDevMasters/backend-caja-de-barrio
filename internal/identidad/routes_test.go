@@ -3,6 +3,7 @@ package identidad_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/api"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/identidad"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/opclient"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/store"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/verifik"
 )
@@ -32,6 +34,10 @@ type datosFalsos struct {
 	aceptacionID      string
 	aceptacionNumero  string
 	aceptacionVersion string
+
+	politicasAceptadas bool
+	creada             store.Persona
+	crearErr           error
 }
 
 func (f *datosFalsos) PersonaPorWhatsapp(_ context.Context, _ string) (store.Persona, bool, error) {
@@ -58,6 +64,16 @@ func (f *datosFalsos) AceptarPoliticas(_ context.Context, id, whatsapp, version,
 	return f.err
 }
 
+func (f *datosFalsos) PoliticasAceptadas(_ context.Context, _, _ string) (bool, error) {
+	return f.politicasAceptadas, f.err
+}
+
+func (f *datosFalsos) CrearPersona(_ context.Context, persona store.Persona) error {
+	f.creada = persona
+
+	return f.crearErr
+}
+
 // surface mounts the internal surface the way the backend does, so these tests walk
 // the same path a caller walks: /internal, the token check, and the routes behind it.
 func surface(t *testing.T, datos identidad.Datos) *httptest.Server {
@@ -67,7 +83,7 @@ func surface(t *testing.T, datos identidad.Datos) *httptest.Server {
 	if err != nil {
 		t.Fatalf("api.New() returned an error: %v", err)
 	}
-	identidad.Register(server, datos, nil)
+	identidad.Register(server, identidad.Dependencias{Datos: datos})
 
 	mux := http.NewServeMux()
 	server.Register(mux)
@@ -297,7 +313,7 @@ func surfaceConProveedor(t *testing.T, cedulas identidad.Cedulas) *httptest.Serv
 	if err != nil {
 		t.Fatalf("api.New() returned an error: %v", err)
 	}
-	identidad.Register(server, &datosFalsos{}, cedulas)
+	identidad.Register(server, identidad.Dependencias{Datos: &datosFalsos{}, Cedulas: cedulas})
 
 	mux := http.NewServeMux()
 	server.Register(mux)
@@ -415,5 +431,166 @@ func TestVerificarCedulaRejectsABodyItCannotUse(t *testing.T) {
 				t.Errorf("codigo = %s, want %s", code, api.CodeDatosInvalidos)
 			}
 		})
+	}
+}
+
+// carterasFalsas stands in for the wallet resolution and records which address it was
+// asked to resolve.
+type carterasFalsas struct {
+	err         error
+	resolviendo string
+}
+
+func (f *carterasFalsas) ResolveWalletAddress(_ context.Context, walletAddressURL string) (opclient.WalletAddress, error) {
+	f.resolviendo = walletAddressURL
+
+	return opclient.WalletAddress{URL: walletAddressURL, AssetCode: "COP", AssetScale: 2}, f.err
+}
+
+// surfaceDeRegistro mounts the surface with the three doubles the registration needs.
+func surfaceDeRegistro(t *testing.T, datos *datosFalsos, cedulas identidad.Cedulas, carteras identidad.Carteras) *httptest.Server {
+	t.Helper()
+
+	server, err := api.New(api.Config{ServiceToken: token})
+	if err != nil {
+		t.Fatalf("api.New() returned an error: %v", err)
+	}
+	identidad.Register(server, identidad.Dependencias{Datos: datos, Cedulas: cedulas, Carteras: carteras})
+
+	mux := http.NewServeMux()
+	server.Register(mux)
+
+	httptestServer := httptest.NewServer(mux)
+	t.Cleanup(httptestServer.Close)
+
+	return httptestServer
+}
+
+// The registration of 5.4: the NAME COMES FROM THE REGISTRY and the shorthand of the
+// wallet becomes the URL the client resolves.
+func TestCrearPersonaRegistersWithTheNameOfTheRegistry(t *testing.T) {
+	datos := &datosFalsos{politicasAceptadas: true}
+	cedulas := &cedulasFalsas{documento: verifik.Document{Valid: true, FullName: "LAURA GOMEZ"}}
+	carteras := &carterasFalsas{}
+
+	status, body := call(t, surfaceDeRegistro(t, datos, cedulas, carteras), http.MethodPost, "/internal/identidad/personas",
+		`{"whatsapp":"573000000001","tipo":"CC","numero":"1036123456","wallet_address":"$ilp.interledger-test.dev/laura-cajadebarrio"}`, true)
+	if status != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %v", status, body)
+	}
+	if id, ok := body["persona_id"].(string); !ok || !strings.HasPrefix(id, "per_") {
+		t.Errorf("persona_id = %v, want it to carry the contract's prefix", body["persona_id"])
+	}
+	if body["estado_registro"] != "verificando" {
+		t.Errorf("estado_registro = %v, want verificando: la aprobacion la da Didit despues", body["estado_registro"])
+	}
+	if datos.creada.Nombre != "LAURA GOMEZ" {
+		t.Errorf("the person was registered as %q, want the name the registry holds: el chat no se usa para el nombre", datos.creada.Nombre)
+	}
+	if carteras.resolviendo != "https://ilp.interledger-test.dev/laura-cajadebarrio" {
+		t.Errorf("the wallet was resolved as %q, want the https URL of the shorthand", carteras.resolviendo)
+	}
+	if datos.creada.WalletAddress != "https://ilp.interledger-test.dev/laura-cajadebarrio" {
+		t.Errorf("the registered wallet address = %q, want the resolved URL", datos.creada.WalletAddress)
+	}
+	if datos.creada.Cedula != "1036123456" || datos.creada.Whatsapp != "573000000001" || datos.creada.Nivel != 1 {
+		t.Errorf("the person was registered as %+v, want the fields of the request", datos.creada)
+	}
+}
+
+// The order of the checks: without the policies nothing else happens, and no person is
+// registered.
+func TestCrearPersonaRefusesWithoutThePolicies(t *testing.T) {
+	datos := &datosFalsos{politicasAceptadas: false}
+
+	status, body := call(t, surfaceDeRegistro(t, datos, &cedulasFalsas{documento: verifik.Document{Valid: true}}, &carterasFalsas{}),
+		http.MethodPost, "/internal/identidad/personas",
+		`{"whatsapp":"573000000001","tipo":"CC","numero":"1036123456","wallet_address":"https://x/laura"}`, true)
+	if status != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %v", status, body)
+	}
+	if code := codeOf(t, body); code != string(api.CodeSinPoliticas) {
+		t.Errorf("codigo = %s, want %s", code, api.CodeSinPoliticas)
+	}
+	if datos.creada.ID != "" {
+		t.Error("a person was registered without the policies accepted")
+	}
+}
+
+func TestCrearPersonaRefusesWhatItCannotUse(t *testing.T) {
+	const cuerpoCompleto = `{"whatsapp":"573000000001","tipo":"CC","numero":"1036123456","wallet_address":"https://x/laura"}`
+
+	tests := []struct {
+		name     string
+		datos    *datosFalsos
+		cedulas  identidad.Cedulas
+		carteras identidad.Carteras
+		body     string
+		want     int
+		code     string
+	}{
+		{
+			name: "el registro no conoce la cedula", datos: &datosFalsos{politicasAceptadas: true},
+			cedulas: &cedulasFalsas{documento: verifik.Document{Valid: false}}, carteras: &carterasFalsas{},
+			body: cuerpoCompleto, want: http.StatusBadRequest, code: string(api.CodeDatosInvalidos),
+		},
+		{
+			name: "el formato de la cedula es una regla local y no va al proveedor", datos: &datosFalsos{politicasAceptadas: true},
+			cedulas: &cedulasFalsas{err: verifik.ErrInvalidDocument}, carteras: &carterasFalsas{},
+			body: cuerpoCompleto, want: http.StatusBadRequest, code: string(api.CodeDatosInvalidos),
+		},
+		{
+			name: "el proveedor falla", datos: &datosFalsos{politicasAceptadas: true},
+			cedulas: &cedulasFalsas{err: &verifik.Error{StatusCode: 500}}, carteras: &carterasFalsas{},
+			body: cuerpoCompleto, want: http.StatusBadGateway, code: string(api.CodeProveedor),
+		},
+		{
+			name:     "la wallet no resuelve, y registrarla crearia una cuenta que el flujo no puede pagar",
+			datos:    &datosFalsos{politicasAceptadas: true},
+			cedulas:  &cedulasFalsas{documento: verifik.Document{Valid: true, FullName: "LAURA GOMEZ"}},
+			carteras: &carterasFalsas{err: errors.New("no existe")},
+			body:     cuerpoCompleto, want: http.StatusBadRequest, code: string(api.CodeDatosInvalidos),
+		},
+		{
+			name: "ese whatsapp ya esta registrado", datos: &datosFalsos{politicasAceptadas: true, crearErr: store.ErrYaRegistrada},
+			cedulas: &cedulasFalsas{documento: verifik.Document{Valid: true, FullName: "LAURA GOMEZ"}}, carteras: &carterasFalsas{},
+			body: cuerpoCompleto, want: http.StatusConflict, code: string(api.CodeYaRegistrada),
+		},
+		{
+			name: "faltan el whatsapp y la wallet", datos: &datosFalsos{politicasAceptadas: true},
+			cedulas: &cedulasFalsas{documento: verifik.Document{Valid: true, FullName: "LAURA GOMEZ"}}, carteras: &carterasFalsas{},
+			body: `{"tipo":"CC","numero":"1036123456"}`, want: http.StatusBadRequest, code: string(api.CodeDatosInvalidos),
+		},
+		{
+			name: "un campo que el contrato no fija", datos: &datosFalsos{politicasAceptadas: true},
+			cedulas: &cedulasFalsas{documento: verifik.Document{Valid: true, FullName: "LAURA GOMEZ"}}, carteras: &carterasFalsas{},
+			body: `{"whatsapp":"573000000001","tipo":"CC","numero":"1036123456","wallet_address":"https://x/laura","nombre":"Laura"}`,
+			want: http.StatusBadRequest, code: string(api.CodeDatosInvalidos),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			status, answer := call(t, surfaceDeRegistro(t, test.datos, test.cedulas, test.carteras), http.MethodPost, "/internal/identidad/personas", test.body, true)
+			if status != test.want {
+				t.Fatalf("status = %d, want %d: %v", status, test.want, answer)
+			}
+			if code := codeOf(t, answer); code != test.code {
+				t.Errorf("codigo = %s, want %s", code, test.code)
+			}
+		})
+	}
+}
+
+// The route is behind the token check, like every other one.
+func TestCrearPersonaAnswersBehindTheTokenCheck(t *testing.T) {
+	status, body := call(t, surfaceDeRegistro(t, &datosFalsos{}, &cedulasFalsas{}, &carterasFalsas{}), http.MethodPost,
+		"/internal/identidad/personas", `{"whatsapp":"573000000001","tipo":"CC","numero":"1036123456","wallet_address":"https://x/laura"}`, false)
+
+	if status != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401: the route answered without the token", status)
+	}
+	if code := codeOf(t, body); code != string(api.CodeNoAutorizado) {
+		t.Errorf("codigo = %s, want %s", code, api.CodeNoAutorizado)
 	}
 }

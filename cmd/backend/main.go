@@ -17,6 +17,7 @@ import (
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/httpserver"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/identidad"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/mapa"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/opclient"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/store"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/verifik"
 )
@@ -92,8 +93,21 @@ func run() error {
 				cedulas = client
 			}
 
+			// The wallet address of the client, which is what resolves a wallet before a person
+			// is registered. It signs with the key the seed registered, so the key has to be
+			// there: without it this route could not check anything and the surface is the
+			// thing that exists to answer.
+			cliente, err := opclient.New(opclient.Config{
+				WalletAddressURL: cfg.OP.ClientWalletAddress,
+				PrivateKeyPath:   cfg.OP.PrivateKeyPath,
+				KeyID:            cfg.OP.KeyID,
+			})
+			if err != nil {
+				return err
+			}
+
 			mapa.Register(internal, database)
-			identidad.Register(internal, database, cedulas)
+			identidad.Register(internal, identidad.Dependencias{Datos: database, Cedulas: cedulas, Carteras: cliente})
 			mounts = append(mounts, internal.Register)
 		}
 	}

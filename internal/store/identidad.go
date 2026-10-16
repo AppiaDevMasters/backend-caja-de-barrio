@@ -159,6 +159,25 @@ func (s *Store) TenderoPorWhatsapp(ctx context.Context, whatsapp string, fecha t
 	return tendero, true, nil
 }
 
+// PoliticasAceptadas says whether that number accepted that version of the policies.
+//
+// It is asked by the NUMBER and not by the person, because the acceptance comes BEFORE
+// the registration: that is the order the contract fixes, and it is why the table is
+// keyed by the phone number and not by an identifier that does not exist yet.
+func (s *Store) PoliticasAceptadas(ctx context.Context, whatsapp, versionPoliticas string) (bool, error) {
+	var aceptadas bool
+	err := s.pool.QueryRow(ctx, `
+		select exists (
+		    select 1 from aceptaciones_politicas
+		    where whatsapp = $1 and version = $2
+		)`, whatsapp, versionPoliticas).Scan(&aceptadas)
+	if err != nil {
+		return false, fmt.Errorf("store: reading the acceptance of the policies by %s: %w", whatsapp, err)
+	}
+
+	return aceptadas, nil
+}
+
 // CrearPersona registers one person. The phone number is unique in the schema, so a
 // second registration of the same number comes back as ErrYaRegistrada instead of a
 // database error the route would have to read.

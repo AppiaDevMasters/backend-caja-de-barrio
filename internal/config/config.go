@@ -44,6 +44,11 @@ const DefaultOPPrivateKeyPath = "keys/op-private-key.pem"
 // OP holds the Open Payments client settings: the key this backend signs its
 // requests with and the name that key is registered under.
 type OP struct {
+	// ClientWalletAddress is OP_CLIENT_WALLET_ADDRESS: the wallet address this backend
+	// acts as. When it is empty it is the published base plus the application's
+	// account, which is the name the seed registers the client key on.
+	ClientWalletAddress string
+
 	// KeyID is optional. When it is empty the key names itself with its RFC 7638
 	// thumbprint.
 	KeyID          string
@@ -124,22 +129,33 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	rafiki := Rafiki{
+		AdminURL:             defaultString(os.Getenv("RAFIKI_ADMIN_URL"), DefaultRafikiAdminURL),
+		OpenPaymentsURL:      defaultString(os.Getenv("RAFIKI_OPEN_PAYMENTS_URL"), DefaultOpenPaymentsURL),
+		TenantID:             strings.TrimSpace(os.Getenv("RAFIKI_TENANT_ID")),
+		AdminAPISecret:       strings.TrimSpace(os.Getenv("RAFIKI_ADMIN_API_SECRET")),
+		SignatureSecret:      strings.TrimSpace(os.Getenv("RAFIKI_SIGNATURE_SECRET")),
+		IdentityServerSecret: strings.TrimSpace(os.Getenv("RAFIKI_IDENTITY_SERVER_SECRET")),
+		AuthServerURL:        strings.TrimSpace(os.Getenv("RAFIKI_AUTH_SERVER_URL")),
+		AuthServerPublicURL:  strings.TrimSpace(os.Getenv("RAFIKI_AUTH_SERVER_PUBLIC_URL")),
+	}
+
+	// The wallet address of the client is the published base plus the application's
+	// account, which is the name the seed registers the key on: deriving it keeps the
+	// two from drifting apart when the base changes.
+	clientWallet := strings.TrimSpace(os.Getenv("OP_CLIENT_WALLET_ADDRESS"))
+	if clientWallet == "" {
+		clientWallet = strings.TrimSuffix(rafiki.OpenPaymentsURL, "/") + "/app-cajadebarrio"
+	}
+
 	return Config{
 		Addr:     defaultString(os.Getenv("HTTP_ADDR"), DefaultAddr),
 		LogLevel: level,
-		Rafiki: Rafiki{
-			AdminURL:             defaultString(os.Getenv("RAFIKI_ADMIN_URL"), DefaultRafikiAdminURL),
-			OpenPaymentsURL:      defaultString(os.Getenv("RAFIKI_OPEN_PAYMENTS_URL"), DefaultOpenPaymentsURL),
-			TenantID:             strings.TrimSpace(os.Getenv("RAFIKI_TENANT_ID")),
-			AdminAPISecret:       strings.TrimSpace(os.Getenv("RAFIKI_ADMIN_API_SECRET")),
-			SignatureSecret:      strings.TrimSpace(os.Getenv("RAFIKI_SIGNATURE_SECRET")),
-			IdentityServerSecret: strings.TrimSpace(os.Getenv("RAFIKI_IDENTITY_SERVER_SECRET")),
-			AuthServerURL:        strings.TrimSpace(os.Getenv("RAFIKI_AUTH_SERVER_URL")),
-			AuthServerPublicURL:  strings.TrimSpace(os.Getenv("RAFIKI_AUTH_SERVER_PUBLIC_URL")),
-		},
+		Rafiki:   rafiki,
 		OP: OP{
-			KeyID:          strings.TrimSpace(os.Getenv("OP_KEY_ID")),
-			PrivateKeyPath: defaultString(os.Getenv("OP_PRIVATE_KEY_PATH"), DefaultOPPrivateKeyPath),
+			ClientWalletAddress: clientWallet,
+			KeyID:               strings.TrimSpace(os.Getenv("OP_KEY_ID")),
+			PrivateKeyPath:      defaultString(os.Getenv("OP_PRIVATE_KEY_PATH"), DefaultOPPrivateKeyPath),
 		},
 		Database: Database{
 			URL: strings.TrimSpace(os.Getenv("DATABASE_URL")),
