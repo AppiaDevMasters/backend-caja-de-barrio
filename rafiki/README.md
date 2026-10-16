@@ -104,9 +104,35 @@ Las URLs públicas se generan con `RAFIKI_PUBLIC_HOST`:
 RAFIKI_PUBLIC_HOST=100.76.141.47 ./scripts/init.sh --force   # LAN, Tailscale o DNS
 ```
 
-Rutas útiles con ese host: UI de administración `http://<host>:3010` (sin
-autenticación en local), Admin API `http://<host>:3001/graphql` y servidor Open
-Payments `http://<host>:3000`.
+Rutas útiles con ese host: Admin API `http://<host>:3001/graphql` y servidor Open
+Payments `http://<host>:3000`. Hasta que exista una wallet address, el servidor Open
+Payments responde 404; además Rafiki anuncia sus wallet addresses con `https://`
+forzado aunque `OPEN_PAYMENTS_URL` sea `http://`, así que un cliente local tiene que
+bajar a `http` al llamarlas.
+
+### La UI de administración necesita HTTPS (o un túnel SSH)
+
+La UI (`:3010`) pide credenciales: **Tenant ID** (`OPERATOR_TENANT_ID`) y **API
+Secret** (`ADMIN_API_SECRET`), que guarda en la cookie de sesión `__session`. Pero esa
+cookie está fijada como `secure: true` en la imagen del frontend
+(`createCookieSessionStorage` en `packages/frontend/build/index.js`), así que un
+navegador **la descarta sobre `http://`** y toda página con datos responde 401 → 500,
+incluso después de guardar las credenciales. Los navegadores solo aceptan cookies
+`Secure` en orígenes seguros: `https://…` o `http://localhost` (`localhost` cuenta
+como contexto seguro; una IP de LAN o de Tailscale, no).
+
+Dos formas de que funcione, sin tocar el stack:
+
+```bash
+# 1) Túnel SSH desde tu equipo; después abrí http://localhost:3010
+ssh -N -L 3010:localhost:3010 carchila@homelab
+
+# 2) HTTPS en la tailnet (una vez, en el host); después https://<host>.<tailnet>.ts.net
+tailscale serve --bg --https=443 http://localhost:3010
+```
+
+Si la abrís por IP sobre `http://`, la UI va a mostrar errores de autorización
+siempre, por más que las credenciales sean correctas.
 
 `IDENTITY_SERVER_URL` tiene una trampa: `rafiki-auth` lo copia a la columna
 `idpConsentUrl` de `rafiki_auth.tenants` **en el primer arranque**, porque lo siembra

@@ -127,10 +127,15 @@ LOG_LEVEL=debug
 # --- Acceso desde otros dispositivos --------------------------------------
 # El stack corre en un host, no en tu equipo: "localhost" solo sirve para clientes
 # que corren en ese mismo host (contenedores, curl local).
-# UI de administracion:      http://$public_host:3010   (sin autenticacion en local)
 # Admin API (GraphQL):       http://$public_host:3001/graphql  (firma HMAC, ver README)
 # Servidor Open Payments:    http://$public_host:3000
-# Credenciales de la Admin API: ADMIN_API_SECRET y OPERATOR_TENANT_ID, arriba.
+# Credenciales: ADMIN_API_SECRET + OPERATOR_TENANT_ID (arriba), tanto para la
+# Admin API como para la UI de administracion.
+#
+# UI (http://$public_host:3010): su cookie de sesion __session esta fijada como
+# Secure en la imagen del frontend, asi que el navegador la descarta sobre http y
+# la UI queda en 401. Solo funciona en origen seguro: tunel SSH al host
+# (http://localhost:3010) o Tailscale Serve con HTTPS. Ver README.
 EOF
 
 # --- clave Ed25519 del ASE --------------------------------------------------

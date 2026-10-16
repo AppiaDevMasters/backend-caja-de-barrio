@@ -150,7 +150,8 @@ services:
       start_period: 60s
     networks: [rafiki]
 
-  # UI de administracion de Rafiki (sin autenticacion en local).
+  # UI de administracion de Rafiki. Pide Tenant ID + API Secret y necesita HTTPS o
+  # un tunel SSH: su cookie de sesion va con Secure y el navegador la descarta sobre http.
   rafiki-admin:
     image: ghcr.io/interledger/rafiki-frontend:${RAFIKI_VERSION:-v2.4.5-de}
     container_name: rafiki-admin
