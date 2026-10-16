@@ -23,6 +23,9 @@ const DefaultMaxSignatureAge = 5 * time.Minute
 // does not set one (rafiki/docker-compose.yml pins it to '1').
 const DefaultSignatureVersion = 1
 
+// requestTimeout bounds one call to the authorization server.
+const requestTimeout = 10 * time.Second
+
 // Config holds what the ASE endpoints need.
 type Config struct {
 	// SignatureSecret is SIGNATURE_SECRET, the key of the Rafiki-Signature
@@ -36,6 +39,16 @@ type Config struct {
 	// with the authorization server through the x-idp-secret header.
 	IdentityServerSecret string
 
+	// AuthServerURL is the authorization server as the IdP reaches it, server to
+	// server: inside the stack network that is the service name (rafiki-auth:3006),
+	// not the address a browser opens.
+	AuthServerURL string
+
+	// AuthServerPublicURL is the address of that same server a browser can open. It
+	// is only used for the redirect that finishes the interaction. Empty means
+	// AuthServerURL, which is what a backend running on the host wants.
+	AuthServerPublicURL string
+
 	// MaxSignatureAge overrides DefaultMaxSignatureAge when it is positive.
 	MaxSignatureAge time.Duration
 
@@ -46,9 +59,10 @@ type Config struct {
 
 // Server owns the ASE routes.
 type Server struct {
-	cfg    Config
-	logger *slog.Logger
-	mux    *http.ServeMux
+	cfg        Config
+	logger     *slog.Logger
+	mux        *http.ServeMux
+	httpClient *http.Client
 }
 
 // New builds a Server with its routes registered.
@@ -68,7 +82,12 @@ func New(cfg Config) *Server {
 		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	}
 
-	s := &Server{cfg: cfg, logger: logger, mux: http.NewServeMux()}
+	s := &Server{
+		cfg:        cfg,
+		logger:     logger,
+		mux:        http.NewServeMux(),
+		httpClient: &http.Client{Timeout: requestTimeout},
+	}
 	s.Register(s.mux)
 
 	return s
@@ -79,6 +98,8 @@ func New(cfg Config) *Server {
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /webhooks", s.handleWebhook)
 	mux.HandleFunc("GET /rates", s.handleRates)
+	mux.HandleFunc("GET /idp/", s.handleIDPPage)
+	mux.HandleFunc("POST /idp/approve", s.handleIDPChoice)
 }
 
 // writeJSON answers with a JSON body, and reports the encoding failure the only
