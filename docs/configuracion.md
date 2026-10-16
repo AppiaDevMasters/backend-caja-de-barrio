@@ -42,6 +42,13 @@ es el que lo reporta faltante.
 | `OP_KEY_ID` | vacio | Nombre con el que se registra la clave. Vacio significa que la clave se nombra con la huella RFC 7638 de su clave publica. |
 | `OP_PRIVATE_KEY_PATH` | `keys/op-private-key.pem` | Clave privada Ed25519 del cliente. Debe ser la **misma** cuyo JWK registro el seed: si el proceso generara otra, el JWK de la wallet address dejaria de verificar las peticiones firmadas. El archivo esta cubierto por `*.pem` del `.gitignore`. |
 
+## Capa de datos y superficie interna
+
+| Variable | Por defecto | Que es |
+| --- | --- | --- |
+| `DATABASE_URL` | vacio | DSN de PostgreSQL **con PostGIS** para el esquema del contrato (las once tablas). **Lleva credencial y no se imprime nunca**: los mensajes del store nombran host, puerto y base, y el eco crudo del driver se sanea. Sin ella el backend sirve igual los endpoints que Rafiki llama, y la superficie `/internal` **no se monta**. |
+| `SERVICIO_TOKEN` | vacio | Lo que los MCP mandan en la cabecera `X-Servicio-Token`. Sin el, la superficie `/internal` **no se monta**: una superficie sin token quedaria **abierta**, asi que no montarla es la respuesta segura. |
+
 ## Por que no hay `.env.example`
 
 El contexto del proyecto pide un `.env.example` con los nombres de las variables y
