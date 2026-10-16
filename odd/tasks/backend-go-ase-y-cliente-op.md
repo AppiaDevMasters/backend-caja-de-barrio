@@ -123,3 +123,11 @@ Reparto de la documentacion de variables, acordado: `env.example` en la raiz (no
 El hallazgo de idempotencia no afecta al peer: `grep -rni idempot internal/ase/` no encuentra ninguna clave de idempotencia en sus rutas, asi que el defecto latente que encontre en el seed no lo tenia.
 
 Y el claim del webhook quedo verificado por los dos lados y no se cumple: el peer midio 1 fila antes y 1 despues para dos rutas inexistentes distintas, y su handler no registro nada. La entrega real la provoca T7, que es suyo.
+
+L22 (2026-10-16, dos reglas acordadas y una correccion que cierra el tema del webhook):
+
+1. **Quien mueve cada endpoint.** `WEBHOOK_URL` y `EXCHANGE_RATES_URL` son variables globales del stack y pertenecen a la sesion peer; `WALLET_ADDRESS_URL` es un ajuste por tenant y pertenece a esta sesion. El ajuste por tenant **gana** sobre la variable global, asi que si algun dia hay que mover uno de esos dos endpoints lo hace **una sola** de las dos partes, nunca las dos: o el ajuste o la variable, y la otra no se toca.
+
+2. **Ninguna ruta entrante provoca el webhook real**, y eso quedo medido por el peer con el ajuste nuevo: `/tienda-fantasma` y `/cobro-demo` dan 404 sin evento, y una wallet address **existente** (`/app-cajadebarrio`) da 200 y **tampoco** lo crea. La unica via es `getOrPollByUrl`, el camino de cliente. Esto corrige mi frase de que hacia falta "una wallet address con una ruta valida": no alcanza ninguna ruta entrante, hace falta la llamada del cliente que resuelve la URL.
+
+Ademas quedo verificada por esta sesion la validacion de secretos en `ase.New` (commit `cf1c8be`): el binario sale con codigo 1 nombrando `RAFIKI_SIGNATURE_SECRET`. `AuthServerURL` no se valida a proposito, porque solo lo necesita el IdP y su sintoma es el 503 del handler.
