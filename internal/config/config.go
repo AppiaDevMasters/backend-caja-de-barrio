@@ -66,6 +66,13 @@ type Internal struct {
 	Token string
 }
 
+// Verifik holds the settings of the civil registry provider.
+type Verifik struct {
+	// Token is VERIFIK_TOKEN, the bearer token of the cédula query. It carries a
+	// credential, so it is read here and never printed.
+	Token string
+}
+
 // Rafiki holds the ASE side of the settings: the Admin API, the public base of
 // the wallet addresses and the two secrets of the endpoints Rafiki and the
 // identity provider call back. Load reads them but does not require them:
@@ -105,6 +112,7 @@ type Config struct {
 	OP       OP
 	Database Database
 	Internal Internal
+	Verifik  Verifik
 }
 
 // Load reads the environment and validates it. When a value cannot be used it
@@ -138,6 +146,9 @@ func Load() (Config, error) {
 		},
 		Internal: Internal{
 			Token: strings.TrimSpace(os.Getenv("SERVICIO_TOKEN")),
+		},
+		Verifik: Verifik{
+			Token: strings.TrimSpace(os.Getenv("VERIFIK_TOKEN")),
 		},
 	}, nil
 }

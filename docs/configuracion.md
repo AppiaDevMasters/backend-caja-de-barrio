@@ -49,6 +49,12 @@ es el que lo reporta faltante.
 | `DATABASE_URL` | vacio | DSN de PostgreSQL **con PostGIS** para el esquema del contrato (las once tablas). **Lleva credencial y no se imprime nunca**: los mensajes del store nombran host, puerto y base, y el eco crudo del driver se sanea. Sin ella el backend sirve igual los endpoints que Rafiki llama, y la superficie `/internal` **no se monta**. |
 | `SERVICIO_TOKEN` | vacio | Lo que los MCP mandan en la cabecera `X-Servicio-Token`. Sin el, la superficie `/internal` **no se monta**: una superficie sin token quedaria **abierta**, asi que no montarla es la respuesta segura. |
 
+## Proveedores
+
+| Variable | Por defecto | Que es |
+| --- | --- | --- |
+| `VERIFIK_TOKEN` | vacio | Token de Verifik para validar la cedula colombiana (ruta 5.3). Sin el, la ruta **esta montada igual** y responde que no esta configurada: un llamador que recibe una ruta desconocida no puede distinguir una configuracion que falta de una URL mal escrita. |
+
 ## Por que no hay `.env.example`
 
 El contexto del proyecto pide un `.env.example` con los nombres de las variables y

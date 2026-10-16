@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/api"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/store"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/verifik"
 )
 
 // VersionPoliticas is the version of the policies in force. The contract fixes it as
@@ -39,10 +41,21 @@ type Datos interface {
 	AceptarPoliticas(ctx context.Context, id, whatsapp, version, textoUsuario string) error
 }
 
+// Cedulas is the civil registry client this package needs (5.3), as an interface so
+// the routes can be exercised without calling the provider.
+//
+// It may be nil: without the provider's token the route is still mounted and answers
+// that it is not configured, because a caller that gets an unknown path cannot tell a
+// missing configuration from a wrong URL.
+type Cedulas interface {
+	VerifyDocument(ctx context.Context, documentType, documentNumber string) (verifik.Document, error)
+}
+
 // Register adds the identity routes to the surface.
-func Register(server *api.Server, datos Datos) {
+func Register(server *api.Server, datos Datos, cedulas Cedulas) {
 	server.Handle("GET /identidad/personas", quienEscribe(datos))
 	server.Handle("POST /identidad/politicas/aceptaciones", aceptarPoliticas(datos))
+	server.Handle("POST /identidad/cedulas/verificar", verificarCedula(cedulas))
 }
 
 // quienEscribeBody is the answer of 5.1 for the person the number belongs to.
@@ -207,6 +220,59 @@ func aceptarPoliticas(datos Datos) http.HandlerFunc {
 		}
 
 		api.JSON(w, http.StatusCreated, map[string]any{"ok": true, "version": body.Version})
+	}
+}
+
+// verificarCedulaBody is the request of 5.3.
+type verificarCedulaBody struct {
+	Tipo   string `json:"tipo"`
+	Numero string `json:"numero"`
+}
+
+// verificarCedula answers 5.3: it asks the civil registry whether a document exists and
+// gets the full name it holds.
+//
+// A document the registry does not know is an ANSWER and not a failure: it goes back as
+// a 200 with `valida` false, so the agent asks the person to check the number instead of
+// telling her that something broke. The failures are the local format rule (400), the
+// provider failing (502) and the provider not being configured (500).
+func verificarCedula(cedulas Cedulas) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if cedulas == nil {
+			api.Fail(w, api.Errorf(api.CodeInterno, "La validación de cédulas no está configurada."))
+
+			return
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+
+		var body verificarCedulaBody
+		if err := decoder.Decode(&body); err != nil {
+			api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "El cuerpo de la petición no es válido: se espera {\"tipo\": \"CC\", \"numero\": \"...\"}."))
+
+			return
+		}
+
+		documento, err := cedulas.VerifyDocument(r.Context(), body.Tipo, body.Numero)
+		switch {
+		case errors.Is(err, verifik.ErrInvalidDocument):
+			// The provider never saw this one: it is our own format rule.
+			api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "El tipo o el número de la cédula no tienen el formato esperado."))
+
+			return
+		case err != nil:
+			// What the provider said is not repeated verbatim: it is an upstream detail
+			// that the person's assistant cannot explain and does not need.
+			api.Fail(w, api.Errorf(api.CodeProveedor, "No se pudo validar la cédula con el proveedor."))
+
+			return
+		}
+
+		api.JSON(w, http.StatusOK, map[string]any{
+			"valida":          documento.Valid,
+			"nombre_completo": documento.FullName,
+		})
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/api"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/identidad"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/store"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/verifik"
 )
 
 const token = "token-de-servicio-de-prueba"
@@ -66,7 +67,7 @@ func surface(t *testing.T, datos identidad.Datos) *httptest.Server {
 	if err != nil {
 		t.Fatalf("api.New() returned an error: %v", err)
 	}
-	identidad.Register(server, datos)
+	identidad.Register(server, datos, nil)
 
 	mux := http.NewServeMux()
 	server.Register(mux)
@@ -262,6 +263,151 @@ func TestAceptarPoliticasRefusesWhatItCannotUse(t *testing.T) {
 	for name, body := range refusals {
 		t.Run(name, func(t *testing.T) {
 			status, answer := call(t, surface(t, &datosFalsos{}), http.MethodPost, "/internal/identidad/politicas/aceptaciones", body, true)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %v", status, answer)
+			}
+			if code := codeOf(t, answer); code != string(api.CodeDatosInvalidos) {
+				t.Errorf("codigo = %s, want %s", code, api.CodeDatosInvalidos)
+			}
+		})
+	}
+}
+
+// cedulasFalsas stands in for the civil registry and records what it was asked.
+type cedulasFalsas struct {
+	documento verifik.Document
+	err       error
+	tipo      string
+	numero    string
+}
+
+func (f *cedulasFalsas) VerifyDocument(_ context.Context, documentType, documentNumber string) (verifik.Document, error) {
+	f.tipo = documentType
+	f.numero = documentNumber
+
+	return f.documento, f.err
+}
+
+// surfaceConProveedor mounts the surface with a registry double, for the route that
+// talks to the provider.
+func surfaceConProveedor(t *testing.T, cedulas identidad.Cedulas) *httptest.Server {
+	t.Helper()
+
+	server, err := api.New(api.Config{ServiceToken: token})
+	if err != nil {
+		t.Fatalf("api.New() returned an error: %v", err)
+	}
+	identidad.Register(server, &datosFalsos{}, cedulas)
+
+	mux := http.NewServeMux()
+	server.Register(mux)
+
+	httptestServer := httptest.NewServer(mux)
+	t.Cleanup(httptestServer.Close)
+
+	return httptestServer
+}
+
+// A document the registry knows comes back with the name it holds.
+func TestVerificarCedulaAnswersWithTheNameOfTheRegistry(t *testing.T) {
+	cedulas := &cedulasFalsas{documento: verifik.Document{Valid: true, FullName: "LAURA GOMEZ"}}
+
+	status, body := call(t, surfaceConProveedor(t, cedulas), http.MethodPost, "/internal/identidad/cedulas/verificar",
+		`{"tipo":"CC","numero":"1036123456"}`, true)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+	if body["valida"] != true || body["nombre_completo"] != "LAURA GOMEZ" {
+		t.Errorf("the answer of 5.3 = %v, want the document to be valid with its name", body)
+	}
+	if cedulas.tipo != verifik.DocumentTypeCC || cedulas.numero != "1036123456" {
+		t.Errorf("the provider was asked %s/%s, want what the caller sent", cedulas.tipo, cedulas.numero)
+	}
+}
+
+// A document the registry does NOT know is an answer and not a failure: the agent has
+// to be able to ask the person to check the number.
+func TestVerificarCedulaAnswersThatADocumentIsNotValid(t *testing.T) {
+	cedulas := &cedulasFalsas{documento: verifik.Document{Valid: false}}
+
+	status, body := call(t, surfaceConProveedor(t, cedulas), http.MethodPost, "/internal/identidad/cedulas/verificar",
+		`{"tipo":"CC","numero":"1036123456"}`, true)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: a document that is not valid is not a failure", status)
+	}
+	if body["valida"] != false {
+		t.Errorf("valida = %v, want false", body["valida"])
+	}
+}
+
+// The local format rule never reaches the provider, and it is the caller's mistake.
+func TestVerificarCedulaRefusesWhatTheProviderCannotAccept(t *testing.T) {
+	cedulas := &cedulasFalsas{err: verifik.ErrInvalidDocument}
+
+	status, body := call(t, surfaceConProveedor(t, cedulas), http.MethodPost, "/internal/identidad/cedulas/verificar",
+		`{"tipo":"TI","numero":"12"}`, true)
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %v", status, body)
+	}
+	if code := codeOf(t, body); code != string(api.CodeDatosInvalidos) {
+		t.Errorf("codigo = %s, want %s", code, api.CodeDatosInvalidos)
+	}
+}
+
+// A provider failure is a 502, and WHAT THE PROVIDER SAID IS NOT REPEATED: it is an
+// upstream detail the person's assistant cannot explain and does not need.
+func TestVerificarCedulaDoesNotRepeatWhatTheProviderSaid(t *testing.T) {
+	cedulas := &cedulasFalsas{err: &verifik.Error{StatusCode: 500, Message: "detalle interno del proveedor"}}
+
+	status, body := call(t, surfaceConProveedor(t, cedulas), http.MethodPost, "/internal/identidad/cedulas/verificar",
+		`{"tipo":"CC","numero":"1036123456"}`, true)
+	if status != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 when the provider fails: %v", status, body)
+	}
+	if code := codeOf(t, body); code != string(api.CodeProveedor) {
+		t.Errorf("codigo = %s, want %s", code, api.CodeProveedor)
+	}
+	if strings.Contains(body["error"].(map[string]any)["mensaje"].(string), "detalle interno del proveedor") {
+		t.Errorf("the answer repeats what the provider said: %v", body)
+	}
+}
+
+// Without the provider configured the route is still mounted and says so, instead of
+// leaving a caller with a path that does not exist.
+func TestVerificarCedulaWithoutAConfiguredProvider(t *testing.T) {
+	status, body := call(t, surfaceConProveedor(t, nil), http.MethodPost, "/internal/identidad/cedulas/verificar",
+		`{"tipo":"CC","numero":"1036123456"}`, true)
+	if status != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 when the provider is not configured: %v", status, body)
+	}
+	if code := codeOf(t, body); code != string(api.CodeInterno) {
+		t.Errorf("codigo = %s, want %s", code, api.CodeInterno)
+	}
+}
+
+// The route is behind the token check, like every other one.
+func TestVerificarCedulaAnswersBehindTheTokenCheck(t *testing.T) {
+	status, body := call(t, surfaceConProveedor(t, &cedulasFalsas{}), http.MethodPost, "/internal/identidad/cedulas/verificar",
+		`{"tipo":"CC","numero":"1036123456"}`, false)
+
+	if status != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401: the route answered without the token", status)
+	}
+	if code := codeOf(t, body); code != string(api.CodeNoAutorizado) {
+		t.Errorf("codigo = %s, want %s", code, api.CodeNoAutorizado)
+	}
+}
+
+func TestVerificarCedulaRejectsABodyItCannotUse(t *testing.T) {
+	refusals := map[string]string{
+		"no body":                           ``,
+		"a body that is not an object":      `"1036123456"`,
+		"a field the contract does not fix": `{"tipo":"CC","numero":"1036123456","extra":1}`,
+	}
+
+	for name, body := range refusals {
+		t.Run(name, func(t *testing.T) {
+			status, answer := call(t, surfaceConProveedor(t, &cedulasFalsas{}), http.MethodPost, "/internal/identidad/cedulas/verificar", body, true)
 			if status != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400: %v", status, answer)
 			}

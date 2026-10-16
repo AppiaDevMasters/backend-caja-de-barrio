@@ -15,8 +15,10 @@ import (
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/ase"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/config"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/httpserver"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/identidad"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/mapa"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/store"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/verifik"
 )
 
 func main() {
@@ -78,7 +80,20 @@ func run() error {
 				return err
 			}
 
+			// The cédula validation needs the registry. Without its token the route is still
+			// mounted and answers that it is not configured, which is better than leaving a
+			// caller with a path that does not exist.
+			var cedulas identidad.Cedulas
+			if cfg.Verifik.Token != "" {
+				client, err := verifik.New(cfg.Verifik.Token)
+				if err != nil {
+					return err
+				}
+				cedulas = client
+			}
+
 			mapa.Register(internal, database)
+			identidad.Register(internal, database, cedulas)
 			mounts = append(mounts, internal.Register)
 		}
 	}
