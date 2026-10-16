@@ -1450,6 +1450,120 @@ func TestCreateOutgoingPaymentsKeepsThePaymentsAlreadyMadeWhenARotationFails(t *
 	if got.Store.URL == got.Platform.URL {
 		t.Errorf("both payments report the same URL %q, and they are different payments", got.Store.URL)
 	}
+	// The token that was current when the rotation failed also travels back: it is
+	// the last value that paid, so the caller knows which one is stale.
+	if got.Token.Value != "PDP_rotado_1" {
+		t.Errorf("Token.Value = %q, want the token the second payment used (PDP_rotado_1)", got.Token.Value)
+	}
+	// And the error names the payment that was made, so a caller that keeps only the
+	// error still knows which outgoing payment to account for.
+	if !strings.Contains(err.Error(), got.Platform.URL) {
+		t.Errorf("error %q does not name the platform payment %s", err, got.Platform.URL)
+	}
+}
+
+// When the FIRST rotation fails the store was already paid and the platform was
+// not: the store payment has to come back so the caller can record it, and the
+// platform must not be paid at all.
+func TestCreateOutgoingPaymentsKeepsTheStorePaymentWhenTheFirstRotationFails(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	var payments int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/outgoing-payments"):
+			payments++
+			wallet := "https://" + r.Host + strings.TrimSuffix(r.URL.Path, "/outgoing-payments")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, outgoingPaymentResponse(wallet+"/outgoing-payments/op-1", wallet, "https://"+r.Host+"/quotes/q-1"))
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/token/"):
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"error":"la rotacion se cayo"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(srv) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	got, err := client.CreateOutgoingPayments(context.Background(), opclient.CreateOutgoingPaymentsParams{
+		ClientWalletAddress: httpsURL(srv) + "/laura-cajadebarrio",
+		StoreQuoteURL:       httpsURL(srv) + "/quotes/q-1",
+		PlatformQuoteURL:    httpsURL(srv) + "/quotes/q-2",
+		Token:               opclient.AccessToken{Value: "PDP_aprobado_1", ManageURL: httpsURL(srv) + "/token/abc-1", ExpiresIn: 600},
+	})
+	if err == nil {
+		t.Fatal("CreateOutgoingPayments() reported success with a rotation that failed, want an error")
+	}
+	if got.Store.URL == "" {
+		t.Errorf("the store payment was lost: got %+v, want its URL so the caller can record it", got)
+	}
+	if got.Platform.URL != "" {
+		t.Errorf("Platform.URL = %q, want empty: the platform was never paid", got.Platform.URL)
+	}
+	if payments != 1 {
+		t.Errorf("the resource server received %d outgoing payments, want 1: the platform must not be paid when the rotation of the store token failed", payments)
+	}
+	if !strings.Contains(err.Error(), got.Store.URL) {
+		t.Errorf("error %q does not name the store payment %s", err, got.Store.URL)
+	}
+}
+
+// When the platform payment itself fails, the store was already paid: the money
+// moved for the store, so the caller has to know which payment to account for.
+func TestCreateOutgoingPaymentsKeepsTheStorePaymentWhenThePlatformPaymentFails(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	var payments int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/outgoing-payments"):
+			payments++
+			if payments == 2 {
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprint(w, `{"error":"el pago de la plataforma se cayo"}`)
+				return
+			}
+			wallet := "https://" + r.Host + strings.TrimSuffix(r.URL.Path, "/outgoing-payments")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, outgoingPaymentResponse(wallet+"/outgoing-payments/op-1", wallet, "https://"+r.Host+"/quotes/q-1"))
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/token/"):
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"access_token":{"access":[],"value":"PDP_rotado_1","manage":"https://%s/token/abc-2","expires_in":600}}`, r.Host)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(srv) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	got, err := client.CreateOutgoingPayments(context.Background(), opclient.CreateOutgoingPaymentsParams{
+		ClientWalletAddress: httpsURL(srv) + "/laura-cajadebarrio",
+		StoreQuoteURL:       httpsURL(srv) + "/quotes/q-1",
+		PlatformQuoteURL:    httpsURL(srv) + "/quotes/q-2",
+		Token:               opclient.AccessToken{Value: "PDP_aprobado_1", ManageURL: httpsURL(srv) + "/token/abc-1", ExpiresIn: 600},
+	})
+	if err == nil {
+		t.Fatal("CreateOutgoingPayments() reported success with a payment that failed, want an error")
+	}
+	if got.Store.URL == "" {
+		t.Errorf("the store payment was lost: got %+v, want its URL so the caller can record it", got)
+	}
+	if got.Platform.URL != "" {
+		t.Errorf("Platform.URL = %q, want empty: the platform payment failed", got.Platform.URL)
+	}
 }
 
 // A payment the resource server reports as failed is an error, not a success:
