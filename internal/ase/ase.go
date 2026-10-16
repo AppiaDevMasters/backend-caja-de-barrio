@@ -9,6 +9,7 @@ package ase
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -65,8 +66,17 @@ type Server struct {
 	httpClient *http.Client
 }
 
-// New builds a Server with its routes registered.
-func New(cfg Config) *Server {
+// New validates the settings and returns a Server with its routes registered.
+// A missing secret fails here, naming the environment variable, instead of leaving
+// a process that refuses every request at runtime.
+func New(cfg Config) (*Server, error) {
+	if cfg.SignatureSecret == "" {
+		return nil, errors.New("ase: the webhook signature secret is empty (RAFIKI_SIGNATURE_SECRET)")
+	}
+	if cfg.IdentityServerSecret == "" {
+		return nil, errors.New("ase: the identity server secret is empty (RAFIKI_IDENTITY_SERVER_SECRET)")
+	}
+
 	if cfg.SignatureVersion == 0 {
 		cfg.SignatureVersion = DefaultSignatureVersion
 	}
@@ -90,7 +100,7 @@ func New(cfg Config) *Server {
 	}
 	s.Register(s.mux)
 
-	return s
+	return s, nil
 }
 
 // Register adds the ASE routes to a mux the caller owns, so the backend keeps a

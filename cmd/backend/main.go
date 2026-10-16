@@ -34,7 +34,7 @@ func run() error {
 	// The endpoints Rafiki and the identity provider call back into mount
 	// themselves on the backend router, which keeps a single router and a single
 	// health endpoint that the compose healthcheck waits on.
-	aseServer := ase.New(ase.Config{
+	aseServer, err := ase.New(ase.Config{
 		SignatureSecret:      cfg.Rafiki.SignatureSecret,
 		IdentityServerSecret: cfg.Rafiki.IdentityServerSecret,
 		// The identity provider needs the authorization server twice: the address
@@ -43,6 +43,9 @@ func run() error {
 		AuthServerURL:       cfg.Rafiki.AuthServerURL,
 		AuthServerPublicURL: cfg.Rafiki.AuthServerPublicURL,
 	})
+	if err != nil {
+		return err
+	}
 
 	return httpserver.New(cfg, aseServer.Register).Run(ctx)
 }

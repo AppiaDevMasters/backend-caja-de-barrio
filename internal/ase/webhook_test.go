@@ -41,11 +41,17 @@ func signAt(timestamp int64, body string) string {
 func newHandler(t *testing.T) http.Handler {
 	t.Helper()
 
-	return ase.New(ase.Config{
-		SignatureSecret:  testSecret,
-		SignatureVersion: testVersion,
-		Now:              func() time.Time { return pinned },
-	}).Handler()
+	srv, err := ase.New(ase.Config{
+		SignatureSecret:      testSecret,
+		IdentityServerSecret: testIdPSecret,
+		SignatureVersion:     testVersion,
+		Now:                  func() time.Time { return pinned },
+	})
+	if err != nil {
+		t.Fatalf("ase.New() returned an error: %v", err)
+	}
+
+	return srv.Handler()
 }
 
 func post(t *testing.T, handler http.Handler, body, signature string) *httptest.ResponseRecorder {

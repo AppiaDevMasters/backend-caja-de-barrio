@@ -63,12 +63,18 @@ func interactionStub(t *testing.T, detailsCode, choiceCode int) (*httptest.Serve
 func newIdPHandler(t *testing.T, authServerURL string) http.Handler {
 	t.Helper()
 
-	return ase.New(ase.Config{
+	srv, err := ase.New(ase.Config{
+		SignatureSecret:      testSecret,
 		IdentityServerSecret: testIdPSecret,
 		AuthServerURL:        authServerURL,
 		AuthServerPublicURL:  testAuthServerPublic,
 		Now:                  func() time.Time { return pinned },
-	}).Handler()
+	})
+	if err != nil {
+		t.Fatalf("ase.New() returned an error: %v", err)
+	}
+
+	return srv.Handler()
 }
 
 // consentQuery is what the authorization server puts in the redirect it sends to
@@ -215,20 +221,24 @@ func TestIdPChoiceAsksTheAuthServerAndSendsTheBrowserToFinish(t *testing.T) {
 // The browser reaches the authorization server by its public address, which is not
 // the one the IdP uses to talk to it.
 func TestIdPChoiceRedirectsToThePublicAuthServerByDefault(t *testing.T) {
-	srv, _ := interactionStub(t, http.StatusOK, http.StatusAccepted)
+	authServer, _ := interactionStub(t, http.StatusOK, http.StatusAccepted)
 
-	handler := ase.New(ase.Config{
+	srv, err := ase.New(ase.Config{
+		SignatureSecret:      testSecret,
 		IdentityServerSecret: testIdPSecret,
-		AuthServerURL:        srv.URL,
+		AuthServerURL:        authServer.URL,
 		Now:                  func() time.Time { return pinned },
-	}).Handler()
+	})
+	if err != nil {
+		t.Fatalf("ase.New() returned an error: %v", err)
+	}
 
-	rec := postIdP(t, handler, url.Values{"interactId": {"i-1"}, "nonce": {"n-1"}, "choice": {"accept"}})
+	rec := postIdP(t, srv.Handler(), url.Values{"interactId": {"i-1"}, "nonce": {"n-1"}, "choice": {"accept"}})
 
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", rec.Code)
 	}
-	if got, want := rec.Header().Get("Location"), srv.URL+"/interact/i-1/n-1/finish"; got != want {
+	if got, want := rec.Header().Get("Location"), authServer.URL+"/interact/i-1/n-1/finish"; got != want {
 		t.Errorf("Location = %q, want %q", got, want)
 	}
 }
