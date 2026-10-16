@@ -175,6 +175,49 @@ services:
       SIGNATURE_SECRET: ${SIGNATURE_SECRET:?}
     networks: [rafiki]
 
+  # Backend de Caja de Barrio: el ASE que Rafiki llama (webhooks, tipos de cambio e
+  # IdP) y el cliente Open Payments. Corre DENTRO de la red `rafiki` a proposito:
+  # los contenedores no alcanzan los puertos TCP del host (host.docker.internal no
+  # responde desde aca), asi que un backend en el host nunca recibiria un webhook.
+  # El puerto se publica igual, porque el IdP lo abre el navegador del usuario.
+  backend:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: caja-de-barrio-backend:local
+    container_name: caja-de-barrio-backend
+    restart: unless-stopped
+    depends_on:
+      rafiki-backend:
+        condition: service_healthy
+    ports:
+      - '${BACKEND_PORT:-8000}:8000'
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      HTTP_ADDR: ':8000'
+      # La Admin API se alcanza por nombre de servicio, no por localhost.
+      RAFIKI_ADMIN_URL: http://rafiki-backend:3001/graphql
+      # URL publica de las wallet addresses; el valor efectivo por tenant vive en
+      # el ajuste WALLET_ADDRESS_URL de la base.
+      RAFIKI_OPEN_PAYMENTS_URL: ${OPEN_PAYMENTS_URL:-http://localhost:3000}
+      RAFIKI_TENANT_ID: ${OPERATOR_TENANT_ID:?}
+      RAFIKI_ADMIN_API_SECRET: ${ADMIN_API_SECRET:?}
+      RAFIKI_SIGNATURE_SECRET: ${SIGNATURE_SECRET:?}
+      RAFIKI_IDENTITY_SERVER_SECRET: ${IDENTITY_SERVER_SECRET:?}
+      OP_KEY_ID: ${KEY_ID:-}
+      OP_PRIVATE_KEY_PATH: /home/backend/keys/op-private-key.pem
+    volumes:
+      # La MISMA clave que registro el seed: si el contenedor generara otra, el JWK
+      # registrado en la wallet address dejaria de verificar.
+      - ../keys:/home/backend/keys:ro
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://localhost:8000/health']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+    networks: [rafiki]
+
 networks:
   rafiki:
     driver: bridge

@@ -108,10 +108,14 @@ AUTH_SERVER_URL=http://$public_host:3006
 # si cambias este valor despues, hay que actualizar esa columna (ver README).
 IDENTITY_SERVER_URL=http://$public_host:8000/idp/
 # Endpoints de nuestro backend vistos desde los contenedores.
-WEBHOOK_URL=http://host.docker.internal:8000/webhooks
-EXCHANGE_RATES_URL=http://host.docker.internal:8000/rates
+# El backend corre como servicio `backend` en la red rafiki: los contenedores no
+# alcanzan los puertos TCP del host, asi que host.docker.internal no sirve.
+WEBHOOK_URL=http://backend:8000/webhooks
+EXCHANGE_RATES_URL=http://backend:8000/rates
 
 # --- Puertos publicados en el host ----------------------------------------
+# Puerto del backend: lo abre el navegador del usuario (IdP).
+BACKEND_PORT=8000
 OPEN_PAYMENTS_PORT=3000
 ADMIN_API_PORT=3001
 CONNECTOR_PORT=3002

@@ -65,6 +65,7 @@ docker compose down --volumes              # borra Postgres
 | `rafiki-admin` | `http://localhost:3010`          | UI de administración de Rafiki                |
 | `postgres`     | `localhost:5432`                 | Bases `rafiki_backend` y `rafiki_auth`        |
 | `redis`        | interno                          | Cache y datos de ILP                          |
+| `backend`      | `http://localhost:8000`          | Backend de Caja de Barrio: webhooks, tipos de cambio e IdP |
 
 Las bases de datos se separan en `config/dbinit.sql`, que Postgres ejecuta una sola
 vez al inicializar su volumen.
@@ -93,6 +94,42 @@ registrarse en el auth server).
 
 Si regeneras las claves con `./scripts/init.sh --force`, hay que volver a registrar
 la clave pública.
+
+## Por qué el backend corre dentro de la red `rafiki`
+
+`WEBHOOK_URL` y `EXCHANGE_RATES_URL` apuntan a `http://backend:8000/...`, el nombre del
+servicio, y **no** a `host.docker.internal`. El motivo está verificado en este host:
+desde dentro de los contenedores los puertos TCP del host no responden — timeouts a
+`172.17.0.1:3001`, `10.10.0.1:3001`, `10.10.0.1:5432` y `100.76.141.47:8000`, mientras
+que `10.10.0.1:22` sí conecta (devuelve el banner SSH). Un backend corriendo en el host
+nunca recibiría un webhook ni una consulta de tasas: los reintentos de Rafiki morían en
+`timeout of 2000ms exceeded` después de 10 intentos.
+
+El puerto 8000 se publica igual, porque el IdP (`/idp/`) lo abre el navegador del
+usuario, y el navegador sí alcanza el host. La clave del cliente Open Payments se monta
+desde `../keys` en solo lectura: si el contenedor generara otra clave, el JWK registrado
+en la wallet address dejaría de verificar.
+
+## Variables del backend
+
+`docker-compose.yml` inyecta estas variables en el servicio `backend`. El repositorio no
+incluye un `.env.example` para el backend — el harness de Pi bloquea escribir archivos
+`.env.*` — así que la referencia son estos nombres:
+
+| Variable | Sale de | Para qué |
+| --- | --- | --- |
+| `HTTP_ADDR` | compose | Dirección de escucha (`:8000`). |
+| `LOG_LEVEL` | `.env` | Nivel de log del backend. |
+| `RAFIKI_ADMIN_URL` | compose | Admin API del servidor de recursos, por nombre de servicio. |
+| `RAFIKI_OPEN_PAYMENTS_URL` | `.env` (`OPEN_PAYMENTS_URL`) | URL pública que anuncia el ASE. |
+| `RAFIKI_TENANT_ID` | `.env` (`OPERATOR_TENANT_ID`) | Tenant operador que actúa. |
+| `RAFIKI_ADMIN_API_SECRET` | `.env` (`ADMIN_API_SECRET`) | Firma las llamadas a la Admin API. |
+| `RAFIKI_SIGNATURE_SECRET` | `.env` (`SIGNATURE_SECRET`) | Verifica la firma de los webhooks. |
+| `RAFIKI_IDENTITY_SERVER_SECRET` | `.env` (`IDENTITY_SERVER_SECRET`) | Secreto compartido con el IdP. |
+| `OP_KEY_ID`, `OP_PRIVATE_KEY_PATH` | `.env` (`KEY_ID`) | Identidad Open Payments del backend; la clave privada se monta desde `../keys`. |
+
+Fuera de Docker, `cmd/backend` y `cmd/seed` leen las mismas variables del entorno del
+proceso: exportalas desde `.env` mapeando los cuatro nombres que difieren.
 
 ## Acceso desde otros dispositivos
 
@@ -183,12 +220,14 @@ apuntan al backend de Caja de Barrio en el puerto 8000.
 Lo que falta para que un pago funcione de punta a punta. Todos son trabajo de nuestro
 backend (el ASE), no de Rafiki:
 
-1. **Wallet addresses y cuentas**: crearlas con la Admin API GraphQL y registrar la
-   clave pública del ASE con la mutación `createWalletAddressKey` sobre esa wallet
-   address (el auth server no guarda claves del ASE: `rafiki_auth` no tiene tabla de
-   claves).
-2. **Webhooks**: `POST /webhooks` que valide la firma con `SIGNATURE_SECRET`.
-3. **Tipos de cambio**: `GET /rates` con el formato que espera Rafiki.
+1. **Wallet addresses y cuentas**: ya están creadas (asset COP, tres wallet addresses y
+   la clave pública registrada con `createWalletAddressKey`). Falta que sean alcanzables:
+   están en `https://100.76.141.47:3000/...` y en el puerto 3000 no hay TLS todavía, así
+   que necesitan un terminador (por ejemplo `tailscale serve`).
+2. **Webhooks**: `POST /webhooks` implementado en `internal/ase`, con la firma
+   `Rafiki-Signature` verificada y 200 exacto (lo único que Rafiki acepta).
+3. **Tipos de cambio**: `GET /rates` implementado en `internal/ase`, con tabla demo
+   explícita USD↔COP.
 4. **IdP**: `/idp/` para aprobar grants interactivos.
 5. **Peers**: este stack tiene un solo ASE sin pares. Los pagos entre wallet addresses
    del mismo ASE funcionan sin peer; para pagos hacia otro ASE hace falta peering o
