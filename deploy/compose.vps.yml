@@ -1,0 +1,86 @@
+# Overlay para correr el stack en un VPS con HTTPS real.
+#
+#   docker compose -f rafiki/docker-compose.yml -f deploy/compose.vps.yml up -d --build
+#
+# Lo usa deploy/instalar.sh, que fija DOMINIO (por ejemplo 203-0-113-5.sslip.io).
+#
+# Qué cambia frente al stack local:
+# - Ningún puerto queda publicado en el host salvo 80 y 443 de Caddy. Postgres y las
+#   Admin API de Rafiki (3001, 3003) dejan de estar abiertos a internet.
+# - Caddy termina TLS con Let's Encrypt y publica cuatro nombres:
+#     op.<DOMINIO>       → rafiki-backend:3000  (Open Payments: wallet addresses y recursos)
+#     auth.<DOMINIO>     → rafiki-auth:3006     (GNAP: grants, /continue y /interact del navegador)
+#     backend.<DOMINIO>  → backend:8000         (IdP del grant y, después, la API para los MCP)
+#     admin.<DOMINIO>    → rafiki-admin:3010    (UI de Rafiki, con usuario y clave)
+# - Rafiki anuncia esas URLs públicas en https, así que las wallet addresses resuelven
+#   desde cualquier cliente. Dentro de la red los mismos nombres apuntan a Caddy (alias de
+#   red), y los contenedores no dependen de que el proveedor permita salir y volver a la IP
+#   pública.
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: caja-de-barrio-caddy
+    restart: unless-stopped
+    depends_on:
+      - rafiki-backend
+      - rafiki-auth
+      - backend
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      DOMINIO: ${DOMINIO:?falta DOMINIO, lo fija deploy/instalar.sh}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      ADMIN_UI_USUARIO: ${ADMIN_UI_USUARIO:-admin}
+      ADMIN_UI_HASH: ${ADMIN_UI_HASH:?falta ADMIN_UI_HASH, lo fija deploy/instalar.sh}
+    volumes:
+      - ../deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      rafiki:
+        aliases:
+          - op.${DOMINIO}
+          - auth.${DOMINIO}
+          - backend.${DOMINIO}
+
+  postgres:
+    ports: !reset []
+
+  rafiki-backend:
+    ports: !reset []
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      TRUST_PROXY: 'true'
+      OPEN_PAYMENTS_URL: https://op.${DOMINIO}
+      WALLET_ADDRESS_URL: https://op.${DOMINIO}/.well-known/pay
+      # Es el `authServer` que anuncia cada wallet address. Rafiki lo guarda en el tenant
+      # operador la PRIMERA vez que arranca, así que tiene que estar bien desde el inicio.
+      AUTH_SERVER_GRANT_URL: https://auth.${DOMINIO}
+
+  rafiki-auth:
+    ports: !reset []
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      TRUST_PROXY: 'true'
+      AUTH_SERVER_URL: https://auth.${DOMINIO}
+      IDENTITY_SERVER_URL: https://backend.${DOMINIO}/idp/
+
+  rafiki-admin:
+    ports: !reset []
+    environment:
+      OPEN_PAYMENTS_URL: https://op.${DOMINIO}
+
+  backend:
+    ports: !reset []
+    environment:
+      LOG_LEVEL: info
+      RAFIKI_OPEN_PAYMENTS_URL: https://op.${DOMINIO}
+      RAFIKI_AUTH_SERVER_PUBLIC_URL: https://auth.${DOMINIO}
+
+volumes:
+  caddy-data:
+  caddy-config:

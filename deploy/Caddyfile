@@ -1,0 +1,34 @@
+# HTTPS del stack de Caja de Barrio en el VPS. Los certificados los emite Let's Encrypt
+# la primera vez que llega una petición a cada nombre. DOMINIO, ACME_EMAIL y el usuario
+# de la UI llegan como variables de entorno desde deploy/compose.vps.yml.
+{
+	email {$ACME_EMAIL}
+}
+
+# Open Payments: documentos de wallet address, incoming/outgoing payments y quotes.
+op.{$DOMINIO} {
+	encode gzip
+	reverse_proxy rafiki-backend:3000
+}
+
+# Servidor de autorización GNAP. El navegador del usuario abre /interact/... aquí.
+auth.{$DOMINIO} {
+	encode gzip
+	reverse_proxy rafiki-auth:3006
+}
+
+# Backend Go: IdP del grant interactivo (/idp/) y, después, la API /internal de los MCP.
+# Los webhooks de Rafiki llegan por la red interna; desde afuera exigen firma igual.
+backend.{$DOMINIO} {
+	encode gzip
+	reverse_proxy backend:8000
+}
+
+# UI de administración de Rafiki. La imagen corre sin autenticación propia
+# (AUTH_ENABLED=false), así que nunca se publica sin usuario y clave.
+admin.{$DOMINIO} {
+	basic_auth {
+		{$ADMIN_UI_USUARIO} {$ADMIN_UI_HASH}
+	}
+	reverse_proxy rafiki-admin:3010
+}
