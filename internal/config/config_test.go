@@ -140,3 +140,22 @@ func TestLoadDefaultsTheOpenPaymentsPrivateKeyPath(t *testing.T) {
 		t.Errorf("PrivateKeyPath = %q, want %q", cfg.OP.PrivateKeyPath, config.DefaultOPPrivateKeyPath)
 	}
 }
+
+// The ASE side needs two more secrets: one to verify the signature Rafiki puts on
+// every webhook, and one shared with the identity provider that approves
+// interactive grants.
+func TestLoadReadsTheAseSecrets(t *testing.T) {
+	t.Setenv("RAFIKI_SIGNATURE_SECRET", "firma")
+	t.Setenv("RAFIKI_IDENTITY_SERVER_SECRET", "identidad")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() returned an error: %v", err)
+	}
+	if cfg.Rafiki.SignatureSecret != "firma" {
+		t.Errorf("SignatureSecret = %q, want %q", cfg.Rafiki.SignatureSecret, "firma")
+	}
+	if cfg.Rafiki.IdentityServerSecret != "identidad" {
+		t.Errorf("IdentityServerSecret = %q, want %q", cfg.Rafiki.IdentityServerSecret, "identidad")
+	}
+}

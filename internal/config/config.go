@@ -50,14 +50,24 @@ type OP struct {
 	PrivateKeyPath string
 }
 
-// Rafiki holds the Admin API settings. Load reads them but does not require
-// them: /health has to answer before Rafiki is configured, and the component
-// that needs the secret is the one that reports it missing.
+// Rafiki holds the ASE side of the settings: the Admin API, the public base of
+// the wallet addresses and the two secrets of the endpoints Rafiki and the
+// identity provider call back. Load reads them but does not require them:
+// /health has to answer before Rafiki is configured, and the component that
+// needs a secret is the one that reports it missing.
 type Rafiki struct {
 	AdminURL        string
 	OpenPaymentsURL string
 	TenantID        string
 	AdminAPISecret  string
+
+	// SignatureSecret verifies the signature of every webhook Rafiki posts to
+	// this backend.
+	SignatureSecret string
+
+	// IdentityServerSecret is shared with the identity provider that approves
+	// interactive grants it opens in the user's browser.
+	IdentityServerSecret string
 }
 
 // Config holds every setting the backend reads from the environment. It grows
@@ -82,10 +92,12 @@ func Load() (Config, error) {
 		Addr:     defaultString(os.Getenv("HTTP_ADDR"), DefaultAddr),
 		LogLevel: level,
 		Rafiki: Rafiki{
-			AdminURL:        defaultString(os.Getenv("RAFIKI_ADMIN_URL"), DefaultRafikiAdminURL),
-			OpenPaymentsURL: defaultString(os.Getenv("RAFIKI_OPEN_PAYMENTS_URL"), DefaultOpenPaymentsURL),
-			TenantID:        strings.TrimSpace(os.Getenv("RAFIKI_TENANT_ID")),
-			AdminAPISecret:  strings.TrimSpace(os.Getenv("RAFIKI_ADMIN_API_SECRET")),
+			AdminURL:             defaultString(os.Getenv("RAFIKI_ADMIN_URL"), DefaultRafikiAdminURL),
+			OpenPaymentsURL:      defaultString(os.Getenv("RAFIKI_OPEN_PAYMENTS_URL"), DefaultOpenPaymentsURL),
+			TenantID:             strings.TrimSpace(os.Getenv("RAFIKI_TENANT_ID")),
+			AdminAPISecret:       strings.TrimSpace(os.Getenv("RAFIKI_ADMIN_API_SECRET")),
+			SignatureSecret:      strings.TrimSpace(os.Getenv("RAFIKI_SIGNATURE_SECRET")),
+			IdentityServerSecret: strings.TrimSpace(os.Getenv("RAFIKI_IDENTITY_SERVER_SECRET")),
 		},
 		OP: OP{
 			KeyID:          strings.TrimSpace(os.Getenv("OP_KEY_ID")),
