@@ -1,5 +1,6 @@
 # Secretos: nunca versionar.
-# Las llaves de Open Payments y los tokens viven en .env (ver .env.example).
+# Las llaves de Open Payments y los tokens viven en .env; sus NOMBRES, en env.example
+# (que si se versiona: el patron .env.* no lo alcanza).
 .env
 .env.*
 !.env.example
