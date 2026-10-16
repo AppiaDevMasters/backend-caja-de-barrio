@@ -1,0 +1,27 @@
+# Secretos: nunca versionar.
+# Las llaves de Open Payments y los tokens viven en .env (ver .env.example).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+private-key.raw
+public-key.raw
+jwks.json
+
+# Go: binarios y artefactos de compilacion.
+/bin/
+/dist/
+*.test
+*.out
+coverage.txt
+
+# Volcados locales y datos de contenedores.
+/data/
+/tmp/
+
+# Editores y sistema operativo.
+.DS_Store
+.idea/
+.vscode/
+*.swp
