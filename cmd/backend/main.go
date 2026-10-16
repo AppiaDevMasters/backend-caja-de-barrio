@@ -37,6 +37,11 @@ func run() error {
 	aseServer := ase.New(ase.Config{
 		SignatureSecret:      cfg.Rafiki.SignatureSecret,
 		IdentityServerSecret: cfg.Rafiki.IdentityServerSecret,
+		// The identity provider needs the authorization server twice: the address
+		// that resolves inside the compose network for the server to server calls,
+		// and the one the user's browser opens for the final redirect.
+		AuthServerURL:       cfg.Rafiki.AuthServerURL,
+		AuthServerPublicURL: cfg.Rafiki.AuthServerPublicURL,
 	})
 
 	return httpserver.New(cfg, aseServer.Register).Run(ctx)
