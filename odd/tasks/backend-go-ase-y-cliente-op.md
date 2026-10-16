@@ -35,7 +35,7 @@ S10. **Idioma.** Codigo e identificadores en ingles; documentacion del repo y me
 | --- | --- | --- | --- |
 | T1 | S2,S5 | Baseline: `.gitignore` de raiz y commit del trabajo previo (`rafiki/`, `docs/`) | repo |
 | T2 | S1,S3,S4 | Modulo Go, configuracion por entorno, servidor HTTP con `/health` y sus pruebas | `go.mod`, `cmd/backend`, `internal/config`, `internal/httpserver` |
-| T3 | S7 | Cliente de la Admin API GraphQL de Rafiki: crear cuenta, wallet address y registrar clave publica del ASE | `internal/rafikiadmin` |
+| T3 | S7 | Cliente de la Admin API GraphQL de Rafiki: autenticacion con firma HMAC (`SIGNATURE_SECRET`), crear cuenta, wallet address y registrar clave publica del ASE | `internal/rafikiadmin` |
 | T4 | S7 | `POST /webhooks` con verificacion de firma (`SIGNATURE_SECRET`) | `internal/ase` |
 | T5 | S7 | `GET /rates` con el formato que espera Rafiki | `internal/ase` |
 | T6 | S7 | `/idp/` para aprobar grants interactivos (cabecera `x-idp-secret`) | `internal/ase` |
@@ -53,3 +53,5 @@ L1 (pedido original del equipo, textual): "lee el contexto que esta en la carpet
 L2 (2026-10-16, decisiones del equipo en esta sesion): alcance = "Un solo servicio Go con ambos" (`cmd/backend` + `internal/ase` + `internal/opclient`); toolchain = "Te doy la contrasena de sudo" con `sudo apt install golang-go` (Go 1.22).
 
 L3 (2026-10-16, hallazgo de exploracion): el repo tiene un solo commit y no existe `.gitignore` de raiz; `rafiki/.env` y `rafiki/config/keys/*` si estan protegidos por `rafiki/.gitignore`. Se agrego el `.gitignore` de raiz antes de cualquier commit para que ningun secreto entre al historial. La red alcanza `proxy.golang.org` y `github.com`; versiones publicadas del SDK: v0.1.0, v0.2.0, v0.4.0 y v0.5.0.
+
+L4 (2026-10-16, evidencia verificada por el agente; el stack ya estaba levantado, el agente no lo levanto): `rafiki-backend`, `rafiki-auth`, `rafiki-postgres`, `rafiki-redis` y `rafiki-admin` estan corriendo con `ghcr.io/interledger/rafiki-*:v2.4.5-de`, `postgres:16-alpine` y `redis:7-alpine`. `GET localhost:3001/healthz` y `GET localhost:3003/healthz` devuelven 200, y los puertos 3000-3003, 3006, 3007 y 3009-3011 estan escuchando. Todavia no hay ninguna cuenta ni wallet address creada en el ASE. Dato para T3: la Admin API responde `401 Unauthorized` tanto con `Authorization: GNAP <ADMIN_API_SECRET>` como con `Authorization: Bearer <ADMIN_API_SECRET>`, asi que la autenticacion no es un secreto en claro en esa cabecera; el `rafiki/README.md` indica que `SIGNATURE_SECRET` firma "las llamadas a la Admin API", de modo que T3 empieza por implementar esa firma (version 1 de Rafiki) y comprobarla contra `POST /graphql`. El agente no agrego nada al stack ni modifico su estado.
