@@ -25,15 +25,23 @@ type Server struct {
 	mux    *http.ServeMux
 }
 
-// New builds a Server with its routes registered. It does not open the
-// listener; call Run for that.
-func New(cfg config.Config) *Server {
+// New builds a Server with its routes registered. Every mount receives the
+// router after the health route exists, so a component adds its routes without
+// owning the router. A mount that registers a pattern twice makes the process
+// fail at startup, which is what such a programming error deserves.
+//
+// It does not open the listener; call Run for that.
+func New(cfg config.Config, mount ...func(*http.ServeMux)) *Server {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: cfg.LogLevel.Slog(),
 	}))
 
 	s := &Server{cfg: cfg, logger: logger, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+
+	for _, register := range mount {
+		register(s.mux)
+	}
 
 	return s
 }

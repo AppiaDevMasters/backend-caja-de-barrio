@@ -54,3 +54,53 @@ func TestUnknownRouteReturns404(t *testing.T) {
 		t.Errorf("GET /nope status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
+
+// The backend owns the router and the components mount themselves into it, so a
+// component can never take the router over.
+func TestNewMountsTheCallerRoutes(t *testing.T) {
+	srv := httpserver.New(config.Config{Addr: "127.0.0.1:0", LogLevel: config.LevelInfo},
+		func(mux *http.ServeMux) {
+			mux.HandleFunc("POST /webhooks", func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			})
+		},
+		func(mux *http.ServeMux) {
+			mux.HandleFunc("GET /rates", func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+		},
+	)
+
+	for _, route := range []struct {
+		method string
+		path   string
+		want   int
+	}{
+		{http.MethodPost, "/webhooks", http.StatusNoContent},
+		{http.MethodGet, "/rates", http.StatusOK},
+	} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(route.method, route.path, nil))
+
+		if rec.Code != route.want {
+			t.Errorf("%s %s status = %d, want %d", route.method, route.path, rec.Code, route.want)
+		}
+	}
+}
+
+// Mounting happens after the health route is registered, and nothing a caller
+// mounts may remove it: the compose healthcheck depends on it.
+func TestMountingKeepsTheHealthRoute(t *testing.T) {
+	srv := httpserver.New(config.Config{Addr: "127.0.0.1:0", LogLevel: config.LevelInfo},
+		func(mux *http.ServeMux) {
+			mux.HandleFunc("GET /rates", func(w http.ResponseWriter, _ *http.Request) {})
+		},
+	)
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("GET /health status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
