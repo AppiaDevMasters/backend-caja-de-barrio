@@ -33,13 +33,26 @@ const (
 	CodeHashInvalido        Code = "HASH_INVALIDO"
 	CodeFirmaInvalida       Code = "FIRMA_INVALIDA"
 	CodeProveedor           Code = "PROVEEDOR"
-
-	// CodeInterno is the one code the contract does not fix. The contract says
-	// every 4xx and 5xx carries the envelope, and an unclassified failure is still
-	// a 5xx, so it needs a code: without one the reply would be a bare status the
-	// agent cannot turn into a sentence. It is deliberately outside Codes().
-	CodeInterno Code = "INTERNO"
 )
+
+// The two codes the contract does not fix, both outside Codes() so that function
+// stays the contract's vocabulary.
+const (
+	// CodeInterno is the 500. The contract says every 4xx and 5xx carries the
+	// envelope, and an unclassified failure is still a 5xx, so it needs a code:
+	// without one the reply would be a bare status the agent cannot turn into a
+	// sentence.
+	CodeInterno Code = "INTERNO"
+
+	// CodeMetodoNoPermitido is the 405 the router raises when a route exists but
+	// does not take that method. The contract fixes no code for it, and it is a
+	// caller bug that a person's assistant still has to explain.
+	CodeMetodoNoPermitido Code = "METODO_NO_PERMITIDO"
+)
+
+// unclassifiedMessage is what a person reads when this package could not classify
+// a failure. It says nothing about what went wrong on the inside.
+const unclassifiedMessage = "Ocurrió un error inesperado. Intenta de nuevo en unos minutos."
 
 // contractCodes is the table of section 3 in the order the document lists it.
 var contractCodes = []Code{
@@ -75,10 +88,23 @@ func Codes() []Code {
 	return codes
 }
 
+// known reports whether this package can answer with the code. A code the table
+// does not carry is a caller bug, and letting it through would send the agent an
+// identifier nobody can look up.
+func (c Code) known() bool {
+	for _, contract := range contractCodes {
+		if c == contract {
+			return true
+		}
+	}
+
+	return c == CodeInterno || c == CodeMetodoNoPermitido
+}
+
 // Status maps a code to the HTTP status the contract fixes.
 //
-// The last case is a code this package does not know, which means a typo or a
-// code added to a caller without being added to the table: it answers 500 rather
+// The last case is a code this package does not know, which means a caller
+// answered with something that is not one of the codes: it answers 500 rather
 // than guessing a status a person would be told.
 func (c Code) Status() int {
 	switch c {
@@ -94,6 +120,8 @@ func (c Code) Status() int {
 		CodeSinFaceMatch, CodeSinRiesgo, CodeSinAprobacion, CodeSinCupo,
 		CodeCupoExcedido, CodeCotizacionVencida:
 		return http.StatusConflict
+	case CodeMetodoNoPermitido:
+		return http.StatusMethodNotAllowed
 	case CodeProveedor:
 		return http.StatusBadGateway
 	default:
@@ -105,7 +133,8 @@ func (c Code) Status() int {
 //
 // A business decision that is not a failure is not an Error: the contract says
 // those answer 200 with the result, and turning one into an Error would tell a
-// person that something broke when nothing did.
+// person that something broke when nothing did. A handler that wants to answer a
+// blocking decision uses JSON with 200, never Fail.
 type Error struct {
 	// Code is one of the contract codes.
 	Code Code
@@ -136,8 +165,18 @@ type payload struct {
 // Fail writes the contract envelope with the status of the code.
 func Fail(w http.ResponseWriter, err error) {
 	var classified *Error
-	if errors.As(err, &classified) {
-		writeEnvelope(w, classified.Code, classified.Message)
+	// A (*Error)(nil) satisfies errors.As, and dereferencing it would crash the
+	// process that answers the whole surface.
+	if errors.As(err, &classified) && classified != nil {
+		if classified.Code.known() {
+			writeEnvelope(w, classified.Code, classified.Message)
+
+			return
+		}
+
+		slog.Error("the internal surface was answered with a code the contract does not fix",
+			"code", string(classified.Code), "error", err)
+		writeEnvelope(w, CodeInterno, unclassifiedMessage)
 
 		return
 	}
@@ -147,7 +186,7 @@ func Fail(w http.ResponseWriter, err error) {
 	// so the detail goes to the log and the body carries a sentence that is true
 	// and says nothing more.
 	slog.Error("the internal surface failed without a classified error", "error", err)
-	writeEnvelope(w, CodeInterno, "Ocurrio un error inesperado. Intenta de nuevo en unos minutos.")
+	writeEnvelope(w, CodeInterno, unclassifiedMessage)
 }
 
 func writeEnvelope(w http.ResponseWriter, code Code, message string) {

@@ -47,6 +47,32 @@ func TestEveryDocumentedCodeMapsToTheContractStatus(t *testing.T) {
 	}
 }
 
+// contractOrder is the order the contract lists the codes in, which Codes()
+// promises to keep.
+var contractOrder = []Code{
+	CodeNoAutorizado,
+	CodeNoEncontrado,
+	CodeDatosInvalidos,
+	CodeSinPoliticas,
+	CodeSinVerificacion,
+	CodePersonaNoHabilitada,
+	CodeYaRegistrada,
+	CodeTiendaNoDisponible,
+	CodeTopeExcedido,
+	CodeDatosNoCoinciden,
+	CodeEstadoInvalido,
+	CodeCodigoIncorrecto,
+	CodeSinFaceMatch,
+	CodeSinRiesgo,
+	CodeSinAprobacion,
+	CodeSinCupo,
+	CodeCupoExcedido,
+	CodeCotizacionVencida,
+	CodeHashInvalido,
+	CodeFirmaInvalida,
+	CodeProveedor,
+}
+
 func TestTheCodeSetIsExactlyTheContracts(t *testing.T) {
 	codes := Codes()
 	if len(codes) != len(contractStatuses) {
@@ -71,16 +97,41 @@ func TestTheCodeSetIsExactlyTheContracts(t *testing.T) {
 	}
 }
 
-func TestTheInternalCodeIsOutsideTheContractsTable(t *testing.T) {
-	// The contract fixes no 500, and every failure has to carry the envelope the
-	// agent parses, so this package answers one anyway. It is deliberately not
-	// part of Codes(), which is the contract's vocabulary.
-	if got := CodeInterno.Status(); got != http.StatusInternalServerError {
-		t.Errorf("CodeInterno.Status() = %d, want %d", got, http.StatusInternalServerError)
+func TestTheCodeOrderIsTheContracts(t *testing.T) {
+	// The order is part of what Codes() promises, and a set comparison would not
+	// notice it changing.
+	got := Codes()
+	if len(got) != len(contractOrder) {
+		t.Fatalf("Codes() returns %d codes, want %d", len(got), len(contractOrder))
 	}
+	for index, want := range contractOrder {
+		if got[index] != want {
+			t.Errorf("Codes()[%d] = %s, want %s", index, got[index], want)
+		}
+	}
+}
+
+func TestTheCodesOutsideTheContractStayOutsideIt(t *testing.T) {
+	// Two codes exist that the contract does not fix: the 500 the envelope needs,
+	// and the 405 the router raises for a method a route does not take. Neither is
+	// part of Codes(), which stays the contract's vocabulary.
+	additions := map[Code]int{
+		CodeInterno:           http.StatusInternalServerError,
+		CodeMetodoNoPermitido: http.StatusMethodNotAllowed,
+	}
+
+	for code, want := range additions {
+		if got := code.Status(); got != want {
+			t.Errorf("%s.Status() = %d, want %d", code, got, want)
+		}
+		if _, documented := contractStatuses[code]; documented {
+			t.Errorf("%s is in the contract table, so it is not an addition", code)
+		}
+	}
+
 	for _, code := range Codes() {
-		if code == CodeInterno {
-			t.Error("Codes() offers CodeInterno, which is not one of the contract codes")
+		if _, addition := additions[code]; addition {
+			t.Errorf("Codes() offers %s, which is not one of the contract codes", code)
 		}
 	}
 }
@@ -150,9 +201,16 @@ func TestFailDoesNotLeakAnUnclassifiedError(t *testing.T) {
 }
 
 func TestJSONWritesTheBodyWithItsStatus(t *testing.T) {
+	// The Go field names are not the JSON keys, so this proves the tags are
+	// honoured and not merely that a map key arrived as it was written.
+	type persona struct {
+		PersonaID      string `json:"persona_id"`
+		CupoDisponible int    `json:"cupo_disponible"`
+	}
+
 	recorder := httptest.NewRecorder()
 
-	JSON(recorder, http.StatusCreated, map[string]string{"persona_id": "per_laura"})
+	JSON(recorder, http.StatusCreated, persona{PersonaID: "per_laura", CupoDisponible: 795000})
 
 	if recorder.Code != http.StatusCreated {
 		t.Errorf("status = %d, want %d", recorder.Code, http.StatusCreated)
@@ -161,13 +219,18 @@ func TestJSONWritesTheBodyWithItsStatus(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", got)
 	}
 
-	// The contract fixes snake_case and the agent parses the body, so the keys
-	// have to survive the round trip byte for byte.
-	var body map[string]string
+	var body map[string]any
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("the body is not JSON: %v", err)
 	}
 	if body["persona_id"] != "per_laura" {
 		t.Errorf("body = %v, want persona_id per_laura", body)
+	}
+	if _, found := body["cupo_disponible"]; !found {
+		t.Errorf("body = %v, want the snake_case key cupo_disponible", body)
+	}
+	// The Go name must not travel: the agent parses these keys.
+	if _, leaked := body["PersonaID"]; leaked {
+		t.Errorf("the Go field name reached the body: %v", body)
 	}
 }

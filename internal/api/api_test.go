@@ -78,8 +78,16 @@ func TestNewRefusesAnEmptyServiceToken(t *testing.T) {
 	// Without the token every request would be rejected at runtime, so the
 	// process refuses to start instead of serving a surface nobody can call.
 	for _, token := range []string{"", "   "} {
-		if _, err := New(Config{ServiceToken: token}); err == nil {
-			t.Errorf("New(%q) error = nil, want a failure naming SERVICIO_TOKEN", token)
+		server, err := New(Config{ServiceToken: token})
+		if err == nil {
+			t.Fatalf("New(%q) error = nil, want a failure naming SERVICIO_TOKEN", token)
+		}
+		// The name matters: it is the only clue a maintainer gets at startup.
+		if !strings.Contains(err.Error(), "SERVICIO_TOKEN") {
+			t.Errorf("New(%q) error = %q, want it to name SERVICIO_TOKEN", token, err)
+		}
+		if server != nil {
+			t.Errorf("New(%q) returned a server and an error, want no server", token)
 		}
 	}
 }
@@ -156,6 +164,9 @@ func TestTheRejectionBodyIsExactlyTheContractEnvelope(t *testing.T) {
 
 	recorder := withToken(mux, "/internal/personas", "")
 
+	if recorder.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
 	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", got)
 	}
@@ -177,10 +188,21 @@ func TestTheRejectionBodyIsExactlyTheContractEnvelope(t *testing.T) {
 	if len(inner) != 2 {
 		t.Errorf(`"error" carries %d keys, want exactly codigo and mensaje: %s`, len(inner), recorder.Body.String())
 	}
-	if _, found := inner["codigo"]; !found {
-		t.Error(`"error" has no codigo`)
-	}
-	if _, found := inner["mensaje"]; !found {
-		t.Error(`"error" has no mensaje`)
+
+	// Both fields carry something: an empty one leaves the agent with nothing.
+	for _, field := range []string{"codigo", "mensaje"} {
+		raw, found := inner[field]
+		if !found {
+			t.Errorf(`"error" has no %s`, field)
+			continue
+		}
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			t.Errorf(`"%s" is not a string: %v`, field, err)
+			continue
+		}
+		if strings.TrimSpace(value) == "" {
+			t.Errorf(`"%s" is empty: %s`, field, recorder.Body.String())
+		}
 	}
 }
