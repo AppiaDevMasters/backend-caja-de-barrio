@@ -23,9 +23,9 @@ const signatureHeader = "Rafiki-Signature"
 //
 // Go sorts map keys and can turn HTML escaping off, which is most of JCS. Two
 // differences remain, and only the first one can appear in a webhook: Go escapes
-// the two JavaScript line separators where JCS keeps them literal, so the escape
-// is undone below, and Go formats floating point numbers its own way while
-// webhook payloads carry amounts as strings.
+// the two JavaScript line separators where JCS keeps them literal, so they are
+// undone below, and Go formats floating point numbers its own way while webhook
+// payloads carry amounts as strings.
 //
 // Numbers arrive as json.Number, because the decoder that reads the body keeps
 // them exactly as they were sent.
@@ -38,10 +38,66 @@ func canonicalJSON(value any) ([]byte, error) {
 	}
 
 	canonical := bytes.TrimRight(buf.Bytes(), "\n")
-	canonical = bytes.ReplaceAll(canonical, []byte(`\u2028`), []byte("\u2028"))
-	canonical = bytes.ReplaceAll(canonical, []byte(`\u2029`), []byte("\u2029"))
 
-	return canonical, nil
+	return stripNonJCSEscaping(canonical), nil
+}
+
+// lineSeparators are the two JavaScript line separators: Go escapes both and JCS
+// keeps both literal.
+var lineSeparators = []struct {
+	escape  string
+	literal string
+}{
+	{escape: `\u2028`, literal: "\u2028"},
+	{escape: `\u2029`, literal: "\u2029"},
+}
+
+// stripNonJCSEscaping turns the escapes Go writes for the two line separators
+// back into the literal characters and leaves every other byte alone.
+//
+// It walks the encoded JSON instead of replacing the escape as text, because a
+// payload may carry that escape as TEXT: the characters \u2028 written in a
+// payload are an escaped backslash followed by "u2028" and have to stay that way,
+// or the digest would not match the one the sender computed.
+func stripNonJCSEscaping(encoded []byte) []byte {
+	needed := false
+	for _, separator := range lineSeparators {
+		if bytes.Contains(encoded, []byte(separator.escape)) {
+			needed = true
+			break
+		}
+	}
+	if !needed {
+		return encoded
+	}
+
+	stripped := make([]byte, 0, len(encoded))
+	for i := 0; i < len(encoded); i++ {
+		// A doubled backslash is an escaped backslash, and the byte after it never
+		// starts one of the escapes above.
+		if encoded[i] == '\\' && i+1 < len(encoded) && encoded[i+1] == '\\' {
+			stripped = append(stripped, encoded[i], encoded[i+1])
+			i++
+			continue
+		}
+
+		strippedHere := false
+		for _, separator := range lineSeparators {
+			if bytes.HasPrefix(encoded[i:], []byte(separator.escape)) {
+				stripped = append(stripped, separator.literal...)
+				i += len(separator.escape) - 1
+				strippedHere = true
+				break
+			}
+		}
+		if strippedHere {
+			continue
+		}
+
+		stripped = append(stripped, encoded[i])
+	}
+
+	return stripped
 }
 
 // verifySignature checks a Rafiki-Signature header

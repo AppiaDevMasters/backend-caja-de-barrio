@@ -100,6 +100,10 @@ func TestWebhookVerifiesTheCanonicalFormOfTheEvent(t *testing.T) {
 			body:      `{"data":{"note":"a\u2028b"},"id":"evt-3","type":"incoming_payment.completed"}`,
 			canonical: "{\"data\":{\"note\":\"a\u2028b\"},\"id\":\"evt-3\",\"type\":\"incoming_payment.completed\"}",
 		},
+		"the text of an escape is just text": {
+			body:      `{"data":{"note":"a\\u2028b"},"id":"evt-5","type":"incoming_payment.completed"}`,
+			canonical: `{"data":{"note":"a\\u2028b"},"id":"evt-5","type":"incoming_payment.completed"}`,
+		},
 		"numbers without a decimal point": {
 			body:      `{"data":{"amount":1000},"id":"evt-4","type":"incoming_payment.completed"}`,
 			canonical: `{"data":{"amount":1000},"id":"evt-4","type":"incoming_payment.completed"}`,
