@@ -156,3 +156,19 @@ func TestFailSurvivesATypedNilError(t *testing.T) {
 		t.Error("mensaje is empty after a typed nil error")
 	}
 }
+
+func TestATypedNilErrorCanBeFormatted(t *testing.T) {
+	// The same nil receiver is reachable from any caller that formats the error,
+	// not only from Fail.
+	var err error = (*Error)(nil)
+
+	if got := err.Error(); got != "" {
+		t.Errorf("(*Error)(nil).Error() = %q, want the empty string", got)
+	}
+	if got := errorText(err); got != "" {
+		t.Errorf("errorText((*Error)(nil)) = %q, want the empty string", got)
+	}
+	if err == nil {
+		t.Error("a typed nil compares equal to nil, which is the trap this guards")
+	}
+}

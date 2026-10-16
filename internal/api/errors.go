@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"reflect"
+	"regexp"
 )
 
 // Code is one of the error codes the contract fixes in its section 3.
@@ -144,7 +146,31 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
+	// A typed nil satisfies the error interface, so this method is reachable with a
+	// nil receiver. Returning the empty string keeps a nil from crashing whoever
+	// formats it.
+	if e == nil {
+		return ""
+	}
+
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+}
+
+// errorText returns the text of an error, and an empty string for a nil error of
+// any shape, including a typed nil.
+//
+// A typed nil is not == nil, it satisfies the interface, and calling Error on it
+// dereferences a nil receiver. This package answers every request of the surface,
+// so none of its paths may panic.
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	if value := reflect.ValueOf(err); value.Kind() == reflect.Pointer && value.IsNil() {
+		return ""
+	}
+
+	return err.Error()
 }
 
 // Errorf builds an Error with the code the caller chose.
@@ -175,7 +201,7 @@ func Fail(w http.ResponseWriter, err error) {
 		}
 
 		slog.Error("the internal surface was answered with a code the contract does not fix",
-			"code", string(classified.Code), "error", err)
+			"code", string(classified.Code), "error", redact(errorText(err)))
 		writeEnvelope(w, CodeInterno, unclassifiedMessage)
 
 		return
@@ -185,8 +211,41 @@ func Fail(w http.ResponseWriter, err error) {
 	// connection string or somebody's data. The agent reads this body to a person,
 	// so the detail goes to the log and the body carries a sentence that is true
 	// and says nothing more.
-	slog.Error("the internal surface failed without a classified error", "error", err)
+	slog.Error("the internal surface failed without a classified error", "error", redact(errorText(err)))
 	writeEnvelope(w, CodeInterno, unclassifiedMessage)
+}
+
+// The shapes this project uses. This is a filter, not a secret scanner: it covers
+// the credentials this backend actually handles, and it is deliberately narrow so
+// that it does not eat the host a maintainer needs to act on.
+var (
+	// urlCredentials is the password of a URL: what sits between the colon that
+	// follows the user and the at sign. The user part excludes the at sign, so an
+	// address without a password is left alone.
+	urlCredentials = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.\-]*://[^:/?#\s@]+:)[^@\s/?#]*(@)`)
+
+	// keyedSecrets is a named secret in a key and value pair. The separator is
+	// required, so a sentence that merely mentions a token is left alone.
+	keyedSecrets = regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|apikey)\b\s*[=:]\s*\S+`)
+
+	// bearerTokens is a token written out in a message, which is how an
+	// authorization header reaches a log line.
+	bearerTokens = regexp.MustCompile(`(?i)\bbearer\s+\S+`)
+)
+
+// redact masks the credentials a failure's text may carry, before that text
+// reaches a log.
+//
+// The detail of an unclassified failure has to be visible somewhere and the log is
+// that place, but this backend is the only holder of DATABASE_URL and of the
+// provider keys, and the text of that failure comes from a driver or a caller.
+// Hosts, ports and ports are kept, because a log line whose host is masked cannot
+// be acted on.
+func redact(text string) string {
+	text = urlCredentials.ReplaceAllString(text, "${1}***${2}")
+	text = keyedSecrets.ReplaceAllString(text, "${1}=***")
+
+	return bearerTokens.ReplaceAllString(text, "Bearer ***")
 }
 
 func writeEnvelope(w http.ResponseWriter, code Code, message string) {

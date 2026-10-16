@@ -200,7 +200,9 @@ func JSON(w http.ResponseWriter, status int, body any) {
 	w.WriteHeader(status)
 
 	if err := json.NewEncoder(w).Encode(body); err != nil {
-		// The status line is already written, so the only thing left is a log.
-		slog.Error("the internal surface could not encode its reply", "error", err)
+		// The status line is already written, so the only thing left is a log. Its
+		// text goes through the same redaction as every other error this package
+		// logs: the value that could not be encoded may be a credential.
+		slog.Error("the internal surface could not encode its reply", "error", redact(err.Error()))
 	}
 }
