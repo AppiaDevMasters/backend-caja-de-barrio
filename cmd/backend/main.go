@@ -6,13 +6,16 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/api"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/ase"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/config"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/httpserver"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/mapa"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/store"
 )
 
@@ -48,9 +51,12 @@ func run() error {
 		return err
 	}
 
+	// The routes of this backend: the endpoints Rafiki calls, and the internal surface
+	// of the contract when its two requirements are configured.
+	mounts := []func(*http.ServeMux){aseServer.Register}
+
 	// The data layer arrives with its own task. Without DATABASE_URL the backend
-	// still serves what Rafiki calls, which is what the running stack needs, and the
-	// routes that need the database report it themselves when they arrive.
+	// still serves what Rafiki calls, which is what the running stack needs.
 	if cfg.Database.URL != "" {
 		database, err := store.Open(ctx, store.Config{DatabaseURL: cfg.Database.URL})
 		if err != nil {
@@ -61,7 +67,21 @@ func run() error {
 		if _, err := database.Migrate(ctx); err != nil {
 			return err
 		}
+
+		// The internal surface needs the token of every call and a data layer for its
+		// routes, so it appears only when both are configured: mounted without a token
+		// it would be an open surface, and without a database it would be routes that
+		// cannot answer.
+		if cfg.Internal.Token != "" {
+			internal, err := api.New(api.Config{ServiceToken: cfg.Internal.Token})
+			if err != nil {
+				return err
+			}
+
+			mapa.Register(internal, database)
+			mounts = append(mounts, internal.Register)
+		}
 	}
 
-	return httpserver.New(cfg, aseServer.Register).Run(ctx)
+	return httpserver.New(cfg, mounts...).Run(ctx)
 }

@@ -58,6 +58,14 @@ type Database struct {
 	URL string
 }
 
+// Internal holds the settings of the /internal surface the four MCPs call.
+type Internal struct {
+	// Token is SERVICIO_TOKEN: what every call to the surface carries in the
+	// X-Servicio-Token header. It carries a credential, so it is read here and never
+	// printed.
+	Token string
+}
+
 // Rafiki holds the ASE side of the settings: the Admin API, the public base of
 // the wallet addresses and the two secrets of the endpoints Rafiki and the
 // identity provider call back. Load reads them but does not require them:
@@ -96,6 +104,7 @@ type Config struct {
 	Rafiki   Rafiki
 	OP       OP
 	Database Database
+	Internal Internal
 }
 
 // Load reads the environment and validates it. When a value cannot be used it
@@ -126,6 +135,9 @@ func Load() (Config, error) {
 		},
 		Database: Database{
 			URL: strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		},
+		Internal: Internal{
+			Token: strings.TrimSpace(os.Getenv("SERVICIO_TOKEN")),
 		},
 	}, nil
 }
