@@ -199,7 +199,8 @@ func (c *Client) Whoami(ctx context.Context) (Whoami, error) {
 }
 
 // canonicalBody renders the body in the canonical JSON form Rafiki hashes:
-// sorted keys at every level, no whitespace and no HTML escaping.
+// sorted keys at every level, no whitespace, no HTML escaping and the two
+// separators JCS leaves literal.
 //
 // It normalizes through generic values on purpose. Go sorts the keys of a map but
 // keeps the declaration order of a struct, so encoding a nested struct straight
@@ -232,7 +233,54 @@ func canonicalBody(query string, variables map[string]any) ([]byte, error) {
 	}
 
 	// Encode appends a newline; the canonical form has no trailing whitespace.
-	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+	encoded := bytes.TrimRight(buf.Bytes(), "\n")
+
+	// Go escapes U+2028 and U+2029 for JavaScript safety, and JCS leaves them
+	// literal, so the escaped form would not match the canonical form Rafiki
+	// recomputes before hashing.
+	return stripNonJCSescaping(encoded), nil
+}
+
+// stripNonJCSescaping turns the two escapes JCS does not produce back into the
+// characters they hold.
+//
+// It walks the encoded JSON instead of replacing text blindly: two backslashes
+// escape each other, so the escape that follows an odd one is the only real
+// candidate. A payload that really contains the text "\u2028" keeps its escape
+// and stays valid JSON with the same value.
+func stripNonJCSescaping(encoded []byte) []byte {
+	out := make([]byte, 0, len(encoded))
+
+	for i := 0; i < len(encoded); {
+		if encoded[i] != '\\' {
+			out = append(out, encoded[i])
+			i++
+			continue
+		}
+
+		if i+1 < len(encoded) && encoded[i+1] == '\\' {
+			out = append(out, '\\', '\\')
+			i += 2
+			continue
+		}
+
+		rest := encoded[i:]
+		if len(rest) >= 6 && bytes.HasPrefix(rest, []byte(`\u2028`)) {
+			out = append(out, "\u2028"...)
+			i += 6
+			continue
+		}
+		if len(rest) >= 6 && bytes.HasPrefix(rest, []byte(`\u2029`)) {
+			out = append(out, "\u2029"...)
+			i += 6
+			continue
+		}
+
+		out = append(out, encoded[i])
+		i++
+	}
+
+	return out
 }
 
 // signatureHeader builds the header Rafiki verifies.

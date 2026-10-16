@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -217,5 +218,62 @@ func TestNewRejectsIncompleteConfiguration(t *testing.T) {
 				t.Fatal("New() accepted an incomplete configuration, want an error")
 			}
 		})
+	}
+}
+
+// captureBody runs one operation against a server that records the raw request
+// body, which is what the signature is computed over.
+func captureBody(t *testing.T, variables map[string]any) []byte {
+	t.Helper()
+
+	var got []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		w.Write([]byte(`{"data":null}`))
+	}))
+	defer srv.Close()
+
+	if err := newTestClient(t, srv.URL).Do(context.Background(), `query Q { x }`, variables, nil); err != nil {
+		t.Fatalf("Do() returned an error: %v", err)
+	}
+
+	return got
+}
+
+// JCS leaves U+2028 and U+2029 literal, while Go's JSON encoder escapes them for
+// JavaScript safety. Rafiki hashes the canonical form of the body it parsed, so
+// the escaped form would not match and the signature would be refused with a 401
+// that says nothing. The peer session proved a literal U+2028 survives a full
+// webhook round trip on the other side.
+func TestDoKeepsTheSeparatorsJCSLeavesLiteral(t *testing.T) {
+	body := string(captureBody(t, map[string]any{"publicName": "Tienda\u2028de barrio\u2029fin"}))
+
+	if strings.Contains(body, `\u2028`) || strings.Contains(body, `\u2029`) {
+		t.Errorf("body %s carries the escaped separators, which Rafiki would not reproduce", body)
+	}
+	if !strings.Contains(body, "\u2028") || !strings.Contains(body, "\u2029") {
+		t.Errorf("body %s does not carry the literal separators JCS leaves alone", body)
+	}
+}
+
+// A payload that really holds the text `\u2028` has to survive: the escape Go
+// wrote for that backslash is not a separator.
+func TestDoKeepsAnEscapedBackslashIntact(t *testing.T) {
+	const nota = `costo \u2028 exacto`
+
+	body := captureBody(t, map[string]any{"nota": nota})
+
+	if !strings.Contains(string(body), `\\u2028`) {
+		t.Errorf("body %s lost the escape of the literal backslash", body)
+	}
+
+	var decoded struct {
+		Variables map[string]string `json:"variables"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("body %s is no longer valid JSON: %v", body, err)
+	}
+	if decoded.Variables["nota"] != nota {
+		t.Errorf("the payload came back as %q, want %q", decoded.Variables["nota"], nota)
 	}
 }
