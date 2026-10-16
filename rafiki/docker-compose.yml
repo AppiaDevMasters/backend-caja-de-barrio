@@ -197,9 +197,10 @@ services:
       HTTP_ADDR: ':8000'
       # La Admin API se alcanza por nombre de servicio, no por localhost.
       RAFIKI_ADMIN_URL: http://rafiki-backend:3001/graphql
-      # URL publica de las wallet addresses; el valor efectivo por tenant vive en
-      # el ajuste WALLET_ADDRESS_URL de la base.
-      RAFIKI_OPEN_PAYMENTS_URL: ${OPEN_PAYMENTS_URL:-http://localhost:3000}
+      # Base efectiva de las wallet addresses del ASE: el ajuste por tenant
+      # WALLET_ADDRESS_URL de la base. El seed la lee y exige https (Rafiki rechaza
+      # toda wallet address URL que no lo sea); el backend no la usa en ejecucion.
+      RAFIKI_OPEN_PAYMENTS_URL: https://rafiki-backend:3000
       RAFIKI_TENANT_ID: ${OPERATOR_TENANT_ID:?}
       RAFIKI_ADMIN_API_SECRET: ${ADMIN_API_SECRET:?}
       RAFIKI_SIGNATURE_SECRET: ${SIGNATURE_SECRET:?}
