@@ -8,6 +8,7 @@
 package ase
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -77,6 +78,17 @@ func New(cfg Config) *Server {
 // single router and the caller keeps the health endpoint.
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /webhooks", s.handleWebhook)
+	mux.HandleFunc("GET /rates", s.handleRates)
+}
+
+// writeJSON answers with a JSON body, and reports the encoding failure the only
+// way left once the status line is written: a log line.
+func (s *Server) writeJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		s.logger.Error("could not encode the JSON response", "error", err)
+	}
 }
 
 // Handler returns the router. Tests exercise the routes through it.
