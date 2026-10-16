@@ -23,11 +23,25 @@ const (
 // matches the port rafiki/docker-compose.yml expects from this backend.
 const DefaultAddr = ":8000"
 
+// DefaultRafikiAdminURL is the Admin API endpoint of the local Rafiki stack
+// (rafiki/docker-compose.yml publishes it on port 3001).
+const DefaultRafikiAdminURL = "http://localhost:3001/graphql"
+
+// Rafiki holds the Admin API settings. Load reads them but does not require
+// them: /health has to answer before Rafiki is configured, and the component
+// that needs the secret is the one that reports it missing.
+type Rafiki struct {
+	AdminURL       string
+	TenantID       string
+	AdminAPISecret string
+}
+
 // Config holds every setting the backend reads from the environment. It grows
 // one task at a time; each field is added together with its consumer.
 type Config struct {
 	Addr     string
 	LogLevel Level
+	Rafiki   Rafiki
 }
 
 // Load reads the environment and validates it. When a value cannot be used it
@@ -40,16 +54,21 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		Addr:     addr(os.Getenv("HTTP_ADDR")),
+		Addr:     defaultString(os.Getenv("HTTP_ADDR"), DefaultAddr),
 		LogLevel: level,
+		Rafiki: Rafiki{
+			AdminURL:       defaultString(os.Getenv("RAFIKI_ADMIN_URL"), DefaultRafikiAdminURL),
+			TenantID:       strings.TrimSpace(os.Getenv("RAFIKI_TENANT_ID")),
+			AdminAPISecret: strings.TrimSpace(os.Getenv("RAFIKI_ADMIN_API_SECRET")),
+		},
 	}, nil
 }
 
-func addr(raw string) string {
+func defaultString(raw, fallback string) string {
 	if v := strings.TrimSpace(raw); v != "" {
 		return v
 	}
-	return DefaultAddr
+	return fallback
 }
 
 func parseLevel(raw string) (Level, error) {

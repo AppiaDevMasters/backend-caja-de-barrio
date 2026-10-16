@@ -48,3 +48,51 @@ func TestLoadRejectsUnknownLogLevel(t *testing.T) {
 		t.Errorf("error %q does not name the offending variable LOG_LEVEL", err)
 	}
 }
+
+// The Rafiki settings are read but not required here: /health must answer before
+// Rafiki is configured, and the component that needs the secret validates it.
+func TestLoadLeavesRafikiUnsetWhenEnvironmentIsEmpty(t *testing.T) {
+	t.Setenv("RAFIKI_ADMIN_URL", "")
+	t.Setenv("RAFIKI_TENANT_ID", "")
+	t.Setenv("RAFIKI_ADMIN_API_SECRET", "")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() returned an error: %v", err)
+	}
+	want := config.Rafiki{AdminURL: config.DefaultRafikiAdminURL}
+	if cfg.Rafiki != want {
+		t.Errorf("Rafiki = %+v, want %+v", cfg.Rafiki, want)
+	}
+}
+
+func TestLoadReadsRafikiSettingsFromEnvironment(t *testing.T) {
+	t.Setenv("RAFIKI_ADMIN_URL", "http://rafiki.example:3001/graphql")
+	t.Setenv("RAFIKI_TENANT_ID", "11111111-1111-4111-8111-111111111111")
+	t.Setenv("RAFIKI_ADMIN_API_SECRET", "a-secret")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() returned an error: %v", err)
+	}
+	want := config.Rafiki{
+		AdminURL:       "http://rafiki.example:3001/graphql",
+		TenantID:       "11111111-1111-4111-8111-111111111111",
+		AdminAPISecret: "a-secret",
+	}
+	if cfg.Rafiki != want {
+		t.Errorf("Rafiki = %+v, want %+v", cfg.Rafiki, want)
+	}
+}
+
+func TestLoadDefaultsTheRafikiAdminURL(t *testing.T) {
+	t.Setenv("RAFIKI_ADMIN_URL", "")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() returned an error: %v", err)
+	}
+	if cfg.Rafiki.AdminURL != config.DefaultRafikiAdminURL {
+		t.Errorf("AdminURL = %q, want %q", cfg.Rafiki.AdminURL, config.DefaultRafikiAdminURL)
+	}
+}

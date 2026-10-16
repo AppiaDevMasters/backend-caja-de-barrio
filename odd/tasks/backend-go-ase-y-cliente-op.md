@@ -31,20 +31,21 @@ S10. **Idioma.** Codigo e identificadores en ingles; documentacion del repo y me
 
 ## Tasks
 
-| ID | Specs | Tarea | Ruta |
-| --- | --- | --- | --- |
-| T1 | S2,S5 | Baseline: `.gitignore` de raiz y commit del trabajo previo (`rafiki/`, `docs/`) | repo |
-| T2 | S1,S3,S4 | Modulo Go, configuracion por entorno, servidor HTTP con `/health` y sus pruebas | `go.mod`, `cmd/backend`, `internal/config`, `internal/httpserver` |
-| T3 | S7 | Cliente de la Admin API GraphQL de Rafiki: autenticacion con firma HMAC (`SIGNATURE_SECRET`), crear cuenta, wallet address y registrar clave publica del ASE | `internal/rafikiadmin` |
-| T4 | S7 | `POST /webhooks` con verificacion de firma (`SIGNATURE_SECRET`) | `internal/ase` |
-| T5 | S7 | `GET /rates` con el formato que espera Rafiki | `internal/ase` |
-| T6 | S7 | `/idp/` para aprobar grants interactivos (cabecera `x-idp-secret`) | `internal/ase` |
-| T7 | S1,S8 | `opclient`: cliente autenticado, resolver wallet address e incoming payment + quote | `internal/opclient` |
-| T8 | S1,S8 | `opclient`: grant interactivo de outgoing-payment, `/op/finish` y rotacion del token | `internal/opclient` |
-| T9 | S1,S8,S9 | `opclient`: outgoing payment, verificacion de completado y las pruebas de las invariantes 1 y 4 | `internal/opclient` |
-| T10 | S3,S5 | `Dockerfile`, servicio en `docker-compose.yml`, `.env.example` con los nombres de las variables | raiz |
-| T11 | S6 | `AI_USAGE.md` y `prompts/` con los prompts reales de esta sesion | raiz |
-| T12 | S8,S9 | Verificacion de punta a punta contra el Rafiki local: retiro completo con wallet addresses propias | raiz |
+| ID | Specs | Tarea | Ruta | Commit |
+| --- | --- | --- | --- | --- |
+| T1 | S2,S5 | Baseline: `.gitignore` de raiz y commit del trabajo previo (`rafiki/`, `docs/`) | repo | 568b5b4, f2e6996, 28bf05a, 865b37e |
+| T2 | S1,S3,S4 | Modulo Go, configuracion por entorno, servidor HTTP con `/health` y sus pruebas | `go.mod`, `cmd/backend`, `internal/config`, `internal/httpserver` | d18bcaa |
+| T3a | S7 | Cliente de la Admin API: firma HMAC del tenant, `Do` GraphQL y `Whoami` | `internal/rafikiadmin` | se registra en el commit siguiente |
+| T3b | S7 | `createWalletAddress` y `createWalletAddressKey`, con semilla de las wallet addresses de la demo | `internal/rafikiadmin`, `cmd/seed` | — |
+| T4 | S7 | `POST /webhooks` con verificacion de firma (`SIGNATURE_SECRET`; T4 confirma el esquema real contra Rafiki) | `internal/ase` | — |
+| T5 | S7 | `GET /rates` con el formato que espera Rafiki | `internal/ase` | — |
+| T6 | S7 | `/idp/` para aprobar grants interactivos (cabecera `x-idp-secret`) | `internal/ase` | — |
+| T7 | S1,S8 | `opclient`: cliente autenticado, resolver wallet address e incoming payment + quote | `internal/opclient` | — |
+| T8 | S1,S8 | `opclient`: grant interactivo de outgoing-payment, `/op/finish` y rotacion del token | `internal/opclient` | — |
+| T9 | S1,S8,S9 | `opclient`: outgoing payment, verificacion de completado y las pruebas de las invariantes 1 y 4 | `internal/opclient` | — |
+| T10 | S3,S5 | `Dockerfile`, servicio en `docker-compose.yml`, `.env.example` con los nombres de las variables | raiz | — |
+| T11 | S6 | `AI_USAGE.md` y `prompts/` con los prompts reales de esta sesion | raiz | — |
+| T12 | S8,S9 | Verificacion de punta a punta contra el Rafiki local: retiro completo con wallet addresses propias | raiz | — |
 
 ## Log
 
@@ -55,3 +56,5 @@ L2 (2026-10-16, decisiones del equipo en esta sesion): alcance = "Un solo servic
 L3 (2026-10-16, hallazgo de exploracion): el repo tiene un solo commit y no existe `.gitignore` de raiz; `rafiki/.env` y `rafiki/config/keys/*` si estan protegidos por `rafiki/.gitignore`. Se agrego el `.gitignore` de raiz antes de cualquier commit para que ningun secreto entre al historial. La red alcanza `proxy.golang.org` y `github.com`; versiones publicadas del SDK: v0.1.0, v0.2.0, v0.4.0 y v0.5.0.
 
 L4 (2026-10-16, evidencia verificada por el agente; el stack ya estaba levantado, el agente no lo levanto): `rafiki-backend`, `rafiki-auth`, `rafiki-postgres`, `rafiki-redis` y `rafiki-admin` estan corriendo con `ghcr.io/interledger/rafiki-*:v2.4.5-de`, `postgres:16-alpine` y `redis:7-alpine`. `GET localhost:3001/healthz` y `GET localhost:3003/healthz` devuelven 200, y los puertos 3000-3003, 3006, 3007 y 3009-3011 estan escuchando. Todavia no hay ninguna cuenta ni wallet address creada en el ASE. Dato para T3: la Admin API responde `401 Unauthorized` tanto con `Authorization: GNAP <ADMIN_API_SECRET>` como con `Authorization: Bearer <ADMIN_API_SECRET>`, asi que la autenticacion no es un secreto en claro en esa cabecera; el `rafiki/README.md` indica que `SIGNATURE_SECRET` firma "las llamadas a la Admin API", de modo que T3 empieza por implementar esa firma (version 1 de Rafiki) y comprobarla contra `POST /graphql`. El agente no agrego nada al stack ni modifico su estado.
+
+L5 (2026-10-16, esquema real de la Admin API, leido en el codigo de Rafiki v2.4.5-de y verificado en vivo contra el stack local): la hipotesis de L4 sobre `SIGNATURE_SECRET` es **incorrecta**. `getTenantFromApiSignature` (`packages/backend/src/shared/utils.ts`) exige dos cabeceras: `tenant-id: <OPERATOR_TENANT_ID>` y `Signature: t=<unix_ms>, v1=<hex>`. El digest es el HMAC-SHA256 en hexadecimal sobre `<timestamp>.<cuerpo canonico JCS>` con el `apiSecret` del tenant, y el operador es el tenant cuyo `apiSecret` coincide con `ADMIN_API_SECRET` (`SIGNATURE_SECRET` es para firmar los webhooks que Rafiki envia hacia nosotros, o sea T4). `v1` debe ser igual a `ADMIN_API_SIGNATURE_VERSION` (1 por defecto) y la firma vence a los `ADMIN_API_SIGNATURE_TTL_SECONDS` (30 por defecto). Rafiki guarda la cabecera `Signature` completa en Redis (`signature:<cabecera>`), asi que una repeticion se rechaza como replay y el timestamp tiene que ser unico por peticion aunque se firmen dos llamadas en el mismo milisegundo. Verificado en vivo: `whoami` contra `http://localhost:3001/graphql` devuelve el id del `OPERATOR_TENANT_ID` con `isOperator: true`, y con un secreto equivocado responde `401`. Ademas, en v2.4.5-de **no existe la mutacion `createAccount`**: la cuenta nace con `createWalletAddress`, asi que T3 pierde ese paso y se parte en T3a (cliente y firma) y T3b (wallet address y clave).
