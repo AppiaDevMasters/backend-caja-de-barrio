@@ -26,3 +26,6 @@ coverage.txt
 .idea/
 .vscode/
 *.swp
+
+# Despliegue: usuario y clave de la UI de Rafiki que genera deploy/instalar.sh.
+deploy/.credenciales-admin
