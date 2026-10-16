@@ -333,6 +333,7 @@ wallet addresses del mismo ASE no necesitan peer.
 | `internal/store` | Conexión, migraciones y el esquema del contrato en PostgreSQL + PostGIS |
 | `internal/verifik` | Cliente de Verifik: validación de cédula colombiana |
 | `rafiki/` | El stack local de Rafiki y su `init.sh` (ver [`rafiki/README.md`](rafiki/README.md)) |
+| `deploy/` | Cómo correr el stack en un VPS: overlay de compose, Caddy con HTTPS, instalador y su guía (ver [`deploy/README.md`](deploy/README.md)) |
 | `docs/` | Referencia de configuración y evaluación del SDK de Python |
 | `odd/` | El plan por tareas y su bitácora, con la evidencia verificada |
 | `prompts/` | Los prompts reales con los que se trabajó, sin resumir |
