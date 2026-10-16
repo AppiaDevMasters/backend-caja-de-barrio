@@ -38,9 +38,10 @@ S10. **Idioma.** Codigo e identificadores en ingles; documentacion del repo y me
 | T3a | S7 | Cliente de la Admin API: firma HMAC del tenant, `Do` GraphQL y `Whoami` | `internal/rafikiadmin` | 42485a9 |
 | T3b | S7 | Activos y wallet addresses con `Ensure*` idempotentes, escalar `UInt64` y `cmd/seed` | `internal/rafikiadmin`, `cmd/seed` | se registra en el commit siguiente |
 | T3c | S7 | Clave Ed25519 del cliente y registro del JWK con `createWalletAddressKey` | `internal/rafikiadmin`, `internal/opkeys` | — |
-| T4 | S7 | `POST /webhooks` con verificacion de firma (`SIGNATURE_SECRET`; T4 confirma el esquema real contra Rafiki) | `internal/ase` | — |
-| T5 | S7 | `GET /rates` con el formato que espera Rafiki | `internal/ase` | — |
-| T6 | S7 | `/idp/` para aprobar grants interactivos (cabecera `x-idp-secret`) | `internal/ase` | — |
+| T3d | S7 | Ajuste de tenant `WALLET_ADDRESS_URL` en https; desbloquea la creacion de wallet addresses sin tocar el stack | `internal/rafikiadmin`, `cmd/seed` | se registra en el commit siguiente |
+| T4 | S7 | `POST /webhooks` con verificacion de firma (`SIGNATURE_SECRET`; T4 confirma el esquema real contra Rafiki) | `internal/ase` (sesion 01a145a4) | — |
+| T5 | S7 | `GET /rates` con el formato que espera Rafiki | `internal/ase` (sesion 01a145a4) | — |
+| T6 | S7 | `/idp/` para aprobar grants interactivos (cabecera `x-idp-secret`) | `internal/ase` (sesion 01a145a4) | — |
 | T7 | S1,S8 | `opclient`: cliente autenticado, resolver wallet address e incoming payment + quote (al llamar, bajar la URL https del ASE a http; ver L6) | `internal/opclient` | — |
 | T8 | S1,S8 | `opclient`: grant interactivo de outgoing-payment, `/op/finish` y rotacion del token | `internal/opclient` | — |
 | T9 | S1,S8,S9 | `opclient`: outgoing payment, verificacion de completado y las pruebas de las invariantes 1 y 4 | `internal/opclient` | — |
@@ -67,3 +68,7 @@ L6 (2026-10-16, T3b contra el Rafiki real; 33 pruebas en verde y estos tres hech
 3. **Rafiki guarda `address: finalWalletAddressUrl.toLowerCase()`**, o sea la URL completa en minusculas, asi que la busqueda de idempotencia del seed compara sin distinguir mayusculas; con una comparacion exacta, la segunda corrida intentaba crear un duplicado.
 
 Estado del ASE tras T3b: el activo `COP` escala 2 quedo creado (id `a65721e8-640d-41fb-9963-2162018234f5`), no hay ninguna wallet address, y el seed ahora falla rapido nombrando `RAFIKI_OPEN_PAYMENTS_URL` en vez de dejar que la Admin API conteste "invalid url".
+
+L7 (2026-10-16, T3d verificado en vivo; 38 pruebas en verde): el bloqueo de L6 se resuelve **sin tocar el stack**. Rafiki lee el ajuste por tenant `WALLET_ADDRESS_URL` antes de caer en su propio `OPEN_PAYMENTS_URL` (mismo `createWalletAddressUrl`), y ese ajuste se escribe con la mutacion `createTenantSettings`; el `WALLET_ADDRESS_URL` del compose solo es su valor por defecto. Con el ajuste en `https://100.76.141.47:3000`, Rafiki compone la URL en https, `isValidWalletAddressUrl` la acepta y la creacion funciona. Semantica de la mutacion, leida en `tenants/settings/service.ts`: es un upsert, pero devuelve `TenantSettingError.DuplicateWalletAddressUrl` cuando el mismo valor ya esta, asi que `EnsureTenantSetting` lee primero y no escribe si el valor ya coincide. Evidencia en vivo: la primera corrida escribio el ajuste y creo las tres wallet addresses (`tienda-cajadebarrio` id `270672eb-22c6-4ad3-9ead-19318e89d524`, `laura-cajadebarrio` id `f5bcdabd-f179-4e07-a37c-71370f485a3a`, `app-cajadebarrio` id `15ff490a-31bb-48d0-a956-9806c5a30aa5`) y la segunda devolvio los mismos IDs sin crear nada. Ademas se cambio el valor por defecto de `RAFIKI_OPEN_PAYMENTS_URL` a `https://localhost:3000`: el ASE publica en https y el cliente local baja a http al llamar.
+
+L8 (2026-10-16, reparto de trabajo entre sesiones del mismo working tree): la sesion `01a145a4` toma T4, T5 y T6 en `internal/ase/**`; esta sesion sigue con T3c y T7-T12. Superficies disjuntas: esta sesion no toca `internal/ase` y la otra no toca `internal/rafikiadmin`, `internal/config` ni `cmd/**` (los campos de entorno que necesite se los agrega esta sesion). La sesion peer tiene sin commitear sus ediciones de `rafiki/` (host publico `RAFIKI_PUBLIC_HOST`, `idpConsentUrl` y la nota de HTTPS de la UI) y las commitea ella; esta sesion nunca usa `git add .`, asi que no las arrastra.

@@ -27,9 +27,14 @@ const DefaultAddr = ":8000"
 // (rafiki/docker-compose.yml publishes it on port 3001).
 const DefaultRafikiAdminURL = "http://localhost:3001/graphql"
 
-// DefaultOpenPaymentsURL is where the local Rafiki resource server publishes its
-// wallet addresses (rafiki/docker-compose.yml, port 3000).
-const DefaultOpenPaymentsURL = "http://localhost:3000"
+// DefaultOpenPaymentsURL is the base URL the ASE publishes for its wallet
+// addresses (rafiki/docker-compose.yml publishes the resource server on port
+// 3000).
+//
+// It is https because Rafiki refuses to create a wallet address whose URL is not
+// https. A local client downgrades the scheme to http when it calls the resource
+// server, which listens on plain http.
+const DefaultOpenPaymentsURL = "https://localhost:3000"
 
 // Rafiki holds the Admin API settings. Load reads them but does not require
 // them: /health has to answer before Rafiki is configured, and the component

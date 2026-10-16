@@ -6,31 +6,24 @@ import (
 )
 
 func TestWalletAddressURL(t *testing.T) {
-	tests := map[string]struct {
-		base    string
-		address string
-		want    string
-	}{
-		"https base without trailing slash": {"https://100.76.141.47:3000", "tienda-cajadebarrio", "https://100.76.141.47:3000/tienda-cajadebarrio"},
-		"https base with trailing slash":    {"https://100.76.141.47:3000/", "tienda-cajadebarrio", "https://100.76.141.47:3000/tienda-cajadebarrio"},
+	if got, want := walletAddressURL("https://100.76.141.47:3000", "tienda-cajadebarrio"), "https://100.76.141.47:3000/tienda-cajadebarrio"; got != want {
+		t.Errorf("walletAddressURL(...) = %q, want %q", got, want)
 	}
+}
 
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			got, err := walletAddressURL(tc.base, tc.address)
-			if err != nil {
-				t.Fatalf("walletAddressURL(%q, %q) returned an error: %v", tc.base, tc.address, err)
-			}
-			if got != tc.want {
-				t.Errorf("walletAddressURL(%q, %q) = %q, want %q", tc.base, tc.address, got, tc.want)
-			}
-		})
+func TestRequireHTTPSBaseDropsATrailingSlash(t *testing.T) {
+	got, err := requireHTTPSBase("https://100.76.141.47:3000/")
+	if err != nil {
+		t.Fatalf("requireHTTPSBase() returned an error: %v", err)
+	}
+	if want := "https://100.76.141.47:3000"; got != want {
+		t.Errorf("requireHTTPSBase() = %q, want %q", got, want)
 	}
 }
 
 // Rafiki refuses any wallet address URL that is not https, so the seed reports
 // the variable to fix instead of letting the Admin API answer "invalid url".
-func TestWalletAddressURLRejectsABaseRafikiCannotAccept(t *testing.T) {
+func TestRequireHTTPSBaseRejectsABaseRafikiCannotAccept(t *testing.T) {
 	tests := map[string]string{
 		"http base": "http://100.76.141.47:3000",
 		"no scheme": "100.76.141.47:3000",
@@ -39,9 +32,9 @@ func TestWalletAddressURLRejectsABaseRafikiCannotAccept(t *testing.T) {
 
 	for name, base := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, err := walletAddressURL(base, "tienda-cajadebarrio")
+			_, err := requireHTTPSBase(base)
 			if err == nil {
-				t.Fatalf("walletAddressURL(%q, ...) accepted a base Rafiki rejects, want an error", base)
+				t.Fatalf("requireHTTPSBase(%q) accepted a base Rafiki rejects, want an error", base)
 			}
 			if !strings.Contains(err.Error(), "RAFIKI_OPEN_PAYMENTS_URL") {
 				t.Errorf("error %q does not name RAFIKI_OPEN_PAYMENTS_URL", err)
