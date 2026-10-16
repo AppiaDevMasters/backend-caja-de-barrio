@@ -110,10 +110,14 @@ func run() error {
 		addressURL := walletAddressURL(base, a.address)
 
 		address, err := client.EnsureWalletAddress(ctx, rafikiadmin.CreateWalletAddressInput{
-			AssetID:        asset.ID,
-			Address:        addressURL,
-			PublicName:     a.publicName,
-			IdempotencyKey: "seed:" + a.address,
+			AssetID:    asset.ID,
+			Address:    addressURL,
+			PublicName: a.publicName,
+			// Rafiki binds an idempotency key to the arguments of the first request
+			// that used it and refuses the same key with different arguments, so the
+			// key is derived from the URL: changing the published base has to create
+			// the wallet address instead of being rejected.
+			IdempotencyKey: "seed:wallet-address:" + addressURL,
 		})
 		if err != nil {
 			return fmt.Errorf("ensuring the wallet address %s: %w", addressURL, err)
@@ -139,7 +143,10 @@ func run() error {
 	if err := client.EnsureWalletAddressKey(ctx, rafikiadmin.CreateWalletAddressKeyInput{
 		WalletAddressID: app.ID,
 		JWK:             rafikiadmin.Ed25519JWK(kid, key.PublicKeyBase64()),
-		IdempotencyKey:  "client-key:" + kid,
+		// The wallet address ID is part of the key on purpose: changing the
+		// published base creates a new wallet address, and the same kid has to be
+		// registered on it instead of being deduplicated against the old one.
+		IdempotencyKey: "client-key:" + kid + ":" + app.ID,
 	}); err != nil {
 		return fmt.Errorf("registering the client key %s: %w", kid, err)
 	}
