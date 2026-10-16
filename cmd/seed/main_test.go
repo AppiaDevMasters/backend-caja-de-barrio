@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/rafikiadmin"
 )
 
 func TestWalletAddressURL(t *testing.T) {
@@ -23,9 +25,8 @@ func TestRequireHTTPSBaseDropsATrailingSlash(t *testing.T) {
 }
 
 // The demo needs two currencies and five accounts, not the one currency and three
-// accounts of the first version. This table is the whole plan of accounts the seed
-// executes, so this test is what catches a wrong asset, a missing account or an
-// account the contract gives to two people.
+// accounts of the first version. This test pins that plan for review: it is a change
+// detector, not a behaviour test.
 func TestProvisioningPlanMatchesTheContract(t *testing.T) {
 	want := []actor{
 		{address: "tienda-cajadebarrio", publicName: "Don Jaime - Tienda", assetCode: assetCOP},
@@ -72,10 +73,61 @@ func TestEveryProvisionedAssetIsFunded(t *testing.T) {
 	}
 }
 
-// The platform charges its 1% on its own COP account, so the client key that
-// signs this backend's requests has to be registered on both of the accounts it
-// acts as: without it no signed request of the platform account can be verified.
-func TestTheClientKeyIsRegisteredOnEveryAppAccount(t *testing.T) {
+// The client key has to be active on both accounts this backend acts as. A loop
+// that registered it on only one of them looks identical from the outside, so the
+// seed reads back what the ASE holds and this is the function that decides.
+func TestHasActiveKeyCountsOnlyTheNamedActiveKey(t *testing.T) {
+	tests := []struct {
+		name string
+		keys []rafikiadmin.WalletAddressKey
+		kid  string
+		want bool
+	}{
+		{
+			name: "an active key with that kid counts",
+			keys: []rafikiadmin.WalletAddressKey{{JWK: rafikiadmin.JWK{Kid: "the-kid"}}},
+			kid:  "the-kid",
+			want: true,
+		},
+		{
+			name: "the same kid revoked does not count",
+			keys: []rafikiadmin.WalletAddressKey{{JWK: rafikiadmin.JWK{Kid: "the-kid"}, Revoked: true}},
+			kid:  "the-kid",
+			want: false,
+		},
+		{
+			name: "another kid does not count",
+			keys: []rafikiadmin.WalletAddressKey{{JWK: rafikiadmin.JWK{Kid: "another-kid"}}},
+			kid:  "the-kid",
+			want: false,
+		},
+		{
+			name: "a revoked key of another kid does not make the named one count",
+			keys: []rafikiadmin.WalletAddressKey{{JWK: rafikiadmin.JWK{Kid: "the-kid"}, Revoked: true}, {JWK: rafikiadmin.JWK{Kid: "another-kid"}}},
+			kid:  "the-kid",
+			want: false,
+		},
+		{
+			name: "no keys at all",
+			kid:  "the-kid",
+			want: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := hasActiveKey(test.keys, test.kid); got != test.want {
+				t.Errorf("hasActiveKey(%+v, %q) = %t, want %t", test.keys, test.kid, got, test.want)
+			}
+		})
+	}
+}
+
+// This test pins the plan the seed executes: it is a change detector for the two
+// tables above, and it says nothing about what the seed does with them. The
+// behaviour is covered by the read-back the seed performs (hasActiveKey) and by
+// the live run recorded in L7 of odd/tasks/contrato-interno-y-pagos.md.
+func TestThePlanNamesTheTwoAccountsThatCarryTheClientKey(t *testing.T) {
 	want := map[string]bool{appAddress: true, platformAddress: true}
 
 	got := make(map[string]bool, len(clientKeyAddresses))

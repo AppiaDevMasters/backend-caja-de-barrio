@@ -190,11 +190,35 @@ func run() error {
 		}); err != nil {
 			return fmt.Errorf("registering the client key %s on %s: %w", kid, address, err)
 		}
+
+		// The rule is that the key is active on **every** account this backend acts
+		// as, and only a read-back proves it: a loop that silently registered on one
+		// account would look exactly the same from here.
+		keys, err := client.WalletAddressKeys(ctx, account.ID)
+		if err != nil {
+			return fmt.Errorf("reading back the client key %s on %s: %w", kid, address, err)
+		}
+		if !hasActiveKey(keys, kid) {
+			return fmt.Errorf("the client key %s is not active on %s after registering it", kid, account.Address)
+		}
+
 		fmt.Printf("client key %s registered on %s\n", kid, account.Address)
 	}
 	fmt.Printf("client key %s, private key at %s\n", kid, cfg.OP.PrivateKeyPath)
 
 	return nil
+}
+
+// hasActiveKey reports whether the wallet address holds that kid and it is not
+// revoked: a revoked key has to be registered again to be of any use.
+func hasActiveKey(keys []rafikiadmin.WalletAddressKey, kid string) bool {
+	for _, key := range keys {
+		if key.JWK.Kid == kid && !key.Revoked {
+			return true
+		}
+	}
+
+	return false
 }
 
 // requireHTTPSBase validates the public base URL the ASE publishes for its wallet
