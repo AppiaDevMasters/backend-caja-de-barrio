@@ -27,13 +27,18 @@ const DefaultAddr = ":8000"
 // (rafiki/docker-compose.yml publishes it on port 3001).
 const DefaultRafikiAdminURL = "http://localhost:3001/graphql"
 
+// DefaultOpenPaymentsURL is where the local Rafiki resource server publishes its
+// wallet addresses (rafiki/docker-compose.yml, port 3000).
+const DefaultOpenPaymentsURL = "http://localhost:3000"
+
 // Rafiki holds the Admin API settings. Load reads them but does not require
 // them: /health has to answer before Rafiki is configured, and the component
 // that needs the secret is the one that reports it missing.
 type Rafiki struct {
-	AdminURL       string
-	TenantID       string
-	AdminAPISecret string
+	AdminURL        string
+	OpenPaymentsURL string
+	TenantID        string
+	AdminAPISecret  string
 }
 
 // Config holds every setting the backend reads from the environment. It grows
@@ -57,9 +62,10 @@ func Load() (Config, error) {
 		Addr:     defaultString(os.Getenv("HTTP_ADDR"), DefaultAddr),
 		LogLevel: level,
 		Rafiki: Rafiki{
-			AdminURL:       defaultString(os.Getenv("RAFIKI_ADMIN_URL"), DefaultRafikiAdminURL),
-			TenantID:       strings.TrimSpace(os.Getenv("RAFIKI_TENANT_ID")),
-			AdminAPISecret: strings.TrimSpace(os.Getenv("RAFIKI_ADMIN_API_SECRET")),
+			AdminURL:        defaultString(os.Getenv("RAFIKI_ADMIN_URL"), DefaultRafikiAdminURL),
+			OpenPaymentsURL: defaultString(os.Getenv("RAFIKI_OPEN_PAYMENTS_URL"), DefaultOpenPaymentsURL),
+			TenantID:        strings.TrimSpace(os.Getenv("RAFIKI_TENANT_ID")),
+			AdminAPISecret:  strings.TrimSpace(os.Getenv("RAFIKI_ADMIN_API_SECRET")),
 		},
 	}, nil
 }

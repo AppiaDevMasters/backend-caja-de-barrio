@@ -53,6 +53,7 @@ func TestLoadRejectsUnknownLogLevel(t *testing.T) {
 // Rafiki is configured, and the component that needs the secret validates it.
 func TestLoadLeavesRafikiUnsetWhenEnvironmentIsEmpty(t *testing.T) {
 	t.Setenv("RAFIKI_ADMIN_URL", "")
+	t.Setenv("RAFIKI_OPEN_PAYMENTS_URL", "")
 	t.Setenv("RAFIKI_TENANT_ID", "")
 	t.Setenv("RAFIKI_ADMIN_API_SECRET", "")
 
@@ -60,7 +61,10 @@ func TestLoadLeavesRafikiUnsetWhenEnvironmentIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() returned an error: %v", err)
 	}
-	want := config.Rafiki{AdminURL: config.DefaultRafikiAdminURL}
+	want := config.Rafiki{
+		AdminURL:        config.DefaultRafikiAdminURL,
+		OpenPaymentsURL: config.DefaultOpenPaymentsURL,
+	}
 	if cfg.Rafiki != want {
 		t.Errorf("Rafiki = %+v, want %+v", cfg.Rafiki, want)
 	}
@@ -68,6 +72,7 @@ func TestLoadLeavesRafikiUnsetWhenEnvironmentIsEmpty(t *testing.T) {
 
 func TestLoadReadsRafikiSettingsFromEnvironment(t *testing.T) {
 	t.Setenv("RAFIKI_ADMIN_URL", "http://rafiki.example:3001/graphql")
+	t.Setenv("RAFIKI_OPEN_PAYMENTS_URL", "https://pay.example")
 	t.Setenv("RAFIKI_TENANT_ID", "11111111-1111-4111-8111-111111111111")
 	t.Setenv("RAFIKI_ADMIN_API_SECRET", "a-secret")
 
@@ -76,9 +81,10 @@ func TestLoadReadsRafikiSettingsFromEnvironment(t *testing.T) {
 		t.Fatalf("Load() returned an error: %v", err)
 	}
 	want := config.Rafiki{
-		AdminURL:       "http://rafiki.example:3001/graphql",
-		TenantID:       "11111111-1111-4111-8111-111111111111",
-		AdminAPISecret: "a-secret",
+		AdminURL:        "http://rafiki.example:3001/graphql",
+		OpenPaymentsURL: "https://pay.example",
+		TenantID:        "11111111-1111-4111-8111-111111111111",
+		AdminAPISecret:  "a-secret",
 	}
 	if cfg.Rafiki != want {
 		t.Errorf("Rafiki = %+v, want %+v", cfg.Rafiki, want)
@@ -94,5 +100,17 @@ func TestLoadDefaultsTheRafikiAdminURL(t *testing.T) {
 	}
 	if cfg.Rafiki.AdminURL != config.DefaultRafikiAdminURL {
 		t.Errorf("AdminURL = %q, want %q", cfg.Rafiki.AdminURL, config.DefaultRafikiAdminURL)
+	}
+}
+
+func TestLoadDefaultsTheOpenPaymentsURL(t *testing.T) {
+	t.Setenv("RAFIKI_OPEN_PAYMENTS_URL", "")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() returned an error: %v", err)
+	}
+	if cfg.Rafiki.OpenPaymentsURL != config.DefaultOpenPaymentsURL {
+		t.Errorf("OpenPaymentsURL = %q, want %q", cfg.Rafiki.OpenPaymentsURL, config.DefaultOpenPaymentsURL)
 	}
 }
