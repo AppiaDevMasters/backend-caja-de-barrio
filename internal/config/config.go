@@ -50,6 +50,14 @@ type OP struct {
 	PrivateKeyPath string
 }
 
+// Database holds the data layer settings: where the schema of the contract lives.
+type Database struct {
+	// URL is the PostgreSQL DSN (DATABASE_URL). It carries a credential, so it is
+	// read here and never printed: the store is the component that knows how to
+	// name the database without its password.
+	URL string
+}
+
 // Rafiki holds the ASE side of the settings: the Admin API, the public base of
 // the wallet addresses and the two secrets of the endpoints Rafiki and the
 // identity provider call back. Load reads them but does not require them:
@@ -87,6 +95,7 @@ type Config struct {
 	LogLevel Level
 	Rafiki   Rafiki
 	OP       OP
+	Database Database
 }
 
 // Load reads the environment and validates it. When a value cannot be used it
@@ -114,6 +123,9 @@ func Load() (Config, error) {
 		OP: OP{
 			KeyID:          strings.TrimSpace(os.Getenv("OP_KEY_ID")),
 			PrivateKeyPath: defaultString(os.Getenv("OP_PRIVATE_KEY_PATH"), DefaultOPPrivateKeyPath),
+		},
+		Database: Database{
+			URL: strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		},
 	}, nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/ase"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/config"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/httpserver"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/store"
 )
 
 func main() {
@@ -45,6 +46,21 @@ func run() error {
 	})
 	if err != nil {
 		return err
+	}
+
+	// The data layer arrives with its own task. Without DATABASE_URL the backend
+	// still serves what Rafiki calls, which is what the running stack needs, and the
+	// routes that need the database report it themselves when they arrive.
+	if cfg.Database.URL != "" {
+		database, err := store.Open(ctx, store.Config{DatabaseURL: cfg.Database.URL})
+		if err != nil {
+			return err
+		}
+		defer database.Close()
+
+		if _, err := database.Migrate(ctx); err != nil {
+			return err
+		}
 	}
 
 	return httpserver.New(cfg, aseServer.Register).Run(ctx)
