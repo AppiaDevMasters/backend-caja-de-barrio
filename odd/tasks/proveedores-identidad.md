@@ -1,4 +1,4 @@
-# Proveedores de identidad del backend Go: Verifik (C7) y Didit (cliente de C8)
+# Clientes de proveedor y superficie interna del backend Go: Verifik (C7), Didit (cliente de C8) y `/internal` (C3)
 
 Los dos clientes de proveedor que consumen las rutas de identidad del contrato: la
 validacion de cedula contra Verifik y la verificacion de identidad de Didit con la
@@ -6,8 +6,10 @@ verificación de la firma de su webhook. Superficie propia y exclusiva:
 `internal/verifik/**` y `internal/didit/**`, acordada en el `L6` de
 [`contrato-interno-y-pagos.md`](contrato-interno-y-pagos.md). Las rutas
 (`POST /cedulas/verificar`, `POST /verificaciones`, `GET /verificaciones/{id}`,
-`POST /webhooks/didit`) y el envoltorio de errores son de la sesion 01a1466b, que
-envuelve estos clientes.
+`POST /webhooks/didit`) son de la sesion 01a1466b, que envuelve estos clientes. La
+superficie `/internal` que los monta (C3) si es de esta sesion, y es el segundo corte de
+este documento; se declaro al par por mensaje antes de escribir, porque `internal/api/**`
+estaba en la lista de exclusion de esta sesion.
 
 Documento de la sesion 01a14664. El par no lo edita y esta sesion no edita ninguno
 de los dos documentos del par.
@@ -91,6 +93,30 @@ del par. Este documento las usa como **parametros de constructor**, no las lee d
 entorno; quien las lee es la capa de configuracion del par, y quien las agrega a
 `env.example`, `docs/configuracion.md` y `README.md` es su tarea C17.
 
+### Segundo corte: la superficie `/internal` (C3)
+
+S9. **Base y autenticacion (contrato 3, textual).** "Base:
+`http://backend:<puerto>/internal` dentro de la red de Docker. **No se expone al
+público.**" y "Autenticación entre servicios: header `X-Servicio-Token:
+<SERVICIO_TOKEN>`. Sin él, `401`."
+
+S10. **Envoltorio de errores y tabla de codigos (contrato 3, textual).** "HTTP 4xx/5xx
+con este cuerpo. `mensaje` va en español claro, porque el agente se lo explica a la
+persona:" con la forma `{ "error": { "codigo": "SIN_VERIFICACION", "mensaje": "Primero
+hay que verificar la identidad en Didit." } }`, y la tabla completa de `codigo` -> HTTP,
+que son **veintiun codigos**: `NO_AUTORIZADO` 401; `NO_ENCONTRADO` 404;
+`DATOS_INVALIDOS` 400; `SIN_POLITICAS`, `SIN_VERIFICACION`, `PERSONA_NO_HABILITADA`,
+`YA_REGISTRADA`, `TIENDA_NO_DISPONIBLE`, `TOPE_EXCEDIDO`, `DATOS_NO_COINCIDEN`,
+`ESTADO_INVALIDO`, `CODIGO_INCORRECTO`, `SIN_FACE_MATCH`, `SIN_RIESGO`, `SIN_APROBACION`,
+`SIN_CUPO`, `CUPO_EXCEDIDO` y `COTIZACION_VENCIDA` 409; `HASH_INVALIDO` 400 y
+`FIRMA_INVALIDA` 401; `PROVEEDOR` 502. Textual: "Decisiones de negocio que **no** son
+error (por ejemplo, riesgo que bloquea) responden `200` con el resultado."
+
+S11. **Convenciones que la superficie si posee (contrato 3, textual).** "JSON en
+`snake_case`." El resto de la seccion 3 (montos enteros en pesos, ids con prefijo legible,
+`reserva_id` en cada linea de un retiro) pertenece a cada manejador y no a esta
+superficie, que no conoce personas, tiendas, reservas ni pagos.
+
 ## Tasks
 
 | ID | Specs | Tarea | Superficie | Commit |
@@ -100,10 +126,17 @@ entorno; quien las lee es la capa de configuracion del par, y quien las agrega a
 | D2 | S4,S7 | `internal/didit`: canonicalizacion, `VerifyWebhook` con comparacion de tiempo constante y ventana de frescura, `ParseWebhook` con `Approved`/`Final` insensibles a mayusculas | `internal/didit` | `ffa93fa` |
 | D3 | S7 | Paridad con la forma documentada, medida contra Python: notacion de floats, enteros exactos, el literal `-0`, escapes de control | `internal/didit` | `ffa93fa` |
 | V2 | — | Verificacion independiente y correccion de los defectos confirmados por medicion | ambos | `306f4fb`, `ffa93fa` |
+| V3 | S9,S10,S11 | `internal/api`: montaje de `/internal` con `Register` y `StripPrefix`, middleware `X-Servicio-Token` con comparacion en tiempo constante, envoltura `{error:{codigo,mensaje}}` y la tabla de veintiun codigos | `internal/api` | `c2624c5` |
 
-La rebanada esta cerrada, verde y commiteada. Las tres tareas de codigo cierran con
-commit de unidad de trabajo en `main`, con las pruebas junto al comportamiento, y este
-documento cierra con el suyo.
+La primera rebanada esta cerrada, verde y commiteada. Las tres tareas de codigo cierran
+con commit de unidad de trabajo en `main`, con las pruebas junto al comportamiento, y
+este documento cierra con el suyo.
+
+El segundo corte (V3) tambien esta cerrado y commiteado. Quedan para el par las
+subcarpetas de dominio de `internal/api/` (identidad, mapa, caja y pagos: sus tareas C6 y
+C9 a C14), que registran sus rutas **relativas a la superficie**, y el montaje en
+`cmd/backend/main.go`: una linea, `apiServer.Register(mux)` junto al
+`aseServer.Register` que ya existe.
 
 ## Log
 
@@ -263,3 +296,42 @@ No se uso `git add -A` ni `git add .` en ningun momento, como acordaron las dos 
 en el `L11` del par. Con estos commits los archivos de esta rebanada dejan de estar sin
 seguimiento, que era la causa concreta del `unassessable` que el par reporto en su
 `L10` punto 3.
+
+L9 (2026-10-16, segundo corte: la superficie `/internal` (C3), pedido por el humano en
+paralelo y declarado al par antes de escribir).
+
+El humano ordeno trabajar en paralelo sobre lo que esta pendiente en el par. La
+auditoria fue primero: de las tareas del plan, `C1` y `C2` hasta T8 estan hechas y quedan
+diecisiete pendientes. **`internal/api` y `internal/store` no existian**, y las dos estan
+en la lista de exclusion de esta sesion (`L6` punto 5 del par), asi que tomar cualquiera
+exigia liberar superficie. Se le pidio al par por mensaje y se declaro C3 antes de
+escribir una linea: el pacto es entre las dos sesiones y no se anula solo.
+
+Se eligio C3 y no C4 por tres razones medidas, no por gusto: es el **prerrequisito de C6
+a C14**, asi que desbloquea lo mas con lo menos; **no depende de C0**, porque la tabla de
+codigos y las convenciones estan enteras en la seccion 3 del contrato y no necesitan
+`simuladas.py`; y es **solo biblioteca estandar**, mientras que C4 necesita un cliente de
+Postgres y `go.mod` y `go.sum` son del par.
+
+Prueba primero, con el RED observado: **34 fallos de asercion** antes de implementar.
+GREEN con **90.2%** de cobertura y once paquetes en verde; `go vet` y `gofmt` limpios.
+
+**Un defecto real que encontro la propia prueba.** `Register` montaba la superficie sin
+quitar el prefijo y el mux interno recibia `/internal/personas` mientras su patron era
+`/personas`: 404. `http.ServeMux` no recorta el prefijo por si solo. Ahora `Register` usa
+`http.StripPrefix` antes de que la superficie vea la peticion, asi que las rutas se
+registran **relativas a la superficie** y este paquete queda como el unico lugar que sabe
+de `/internal`. Importa para el par: sus manejadores registran `GET /identidad/personas`,
+no `GET /internal/identidad/personas`.
+
+**Una decision fuera del contrato, dicha y no escondida.** El contrato fija la tabla de
+codigos y dice que todo 4xx y 5xx lleva el envoltorio, pero **no fija ningun 500**. Un
+error no clasificado es un 5xx, asi que necesita un codigo o la respuesta seria un estado
+pelado que el agente no puede convertir en una frase: se agrego `INTERNO` con 500,
+**fuera de `Codes()`**, que sigue siendo el vocabulario del contrato. Su cuerpo lleva una
+frase generica y el detalle va al log, porque el agente le lee ese cuerpo a una persona y
+un error no clasificado puede llevar un host, una cadena de conexion o datos de alguien.
+Es la unica adicion y queda sujeta a revision.
+
+Commiteado en `c2624c5`, con rutas nombradas y la guarda que aborta si queda preparado
+algun archivo ajeno.
