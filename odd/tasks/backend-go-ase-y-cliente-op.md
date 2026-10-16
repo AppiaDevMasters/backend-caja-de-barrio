@@ -131,3 +131,11 @@ L22 (2026-10-16, dos reglas acordadas y una correccion que cierra el tema del we
 2. **Ninguna ruta entrante provoca el webhook real**, y eso quedo medido por el peer con el ajuste nuevo: `/tienda-fantasma` y `/cobro-demo` dan 404 sin evento, y una wallet address **existente** (`/app-cajadebarrio`) da 200 y **tampoco** lo crea. La unica via es `getOrPollByUrl`, el camino de cliente. Esto corrige mi frase de que hacia falta "una wallet address con una ruta valida": no alcanza ninguna ruta entrante, hace falta la llamada del cliente que resuelve la URL.
 
 Ademas quedo verificada por esta sesion la validacion de secretos en `ase.New` (commit `cf1c8be`): el binario sale con codigo 1 nombrando `RAFIKI_SIGNATURE_SECRET`. `AuthServerURL` no se valida a proposito, porque solo lo necesita el IdP y su sintoma es el 503 del handler.
+
+L23 (2026-10-16, cierre definitivo de la titularidad de T7-T9 y contrato de evidencia del webhook):
+
+1. **T7, T8 y T9 (`internal/opclient`) son de la sesion peer, sin ambiguedad.** El humano la autorizo explicitamente a arrancar T7 con el SDK oficial. Esta sesion no toca `internal/opclient`, ni `go.mod`, ni `go.sum`. La frase "siguiente mio: T7" que quedo en un mensaje anterior es **anterior a la cesion** y queda sin efecto; este plan las lista como cedidas desde hace varios turnos. Motivo de la regla: un solo escritor por paquete, porque escribir el mismo paquete en paralelo ya costo una vez.
+
+2. **Contrato de evidencia del primer webhook real**, para cerrar T12: Rafiki **no persiste la cabecera de firma** en ningun lugar consultable, asi que la cabecera no sirve como identificador comun; la clave de correlacion es el `id` del evento. La sesion peer loguea `received a webhook` con `id` y `type`, y la evidencia es esa linea mas la fila de `webhooks` con `statusCode 200`.
+
+3. **Division de la documentacion de variables, decidida.** `docs/configuracion.md` (esta sesion) es la referencia por variable y esta verificada contra los `os.Getenv` del codigo, asi que manda para los nombres; la tabla de `rafiki/README.md` (sesion peer) es la vista del stack: que inyecta `docker-compose.yml` y de donde sale cada valor, y ya enlaza a las otras dos. Si un nombre cambia, se pide el cambio en la tabla en vez de editarla.
