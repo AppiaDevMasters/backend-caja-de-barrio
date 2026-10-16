@@ -1250,6 +1250,7 @@ func TestCreateOutgoingPayments(t *testing.T) {
 	var payments []map[string]any
 	var paymentAuthorizations []string
 	var rotationAuthorizations []string
+	var rotationPaths []string
 	var rotations int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -1279,6 +1280,7 @@ func TestCreateOutgoingPayments(t *testing.T) {
 			rotations++
 			rotation := rotations
 			rotationAuthorizations = append(rotationAuthorizations, r.Header.Get("Authorization"))
+			rotationPaths = append(rotationPaths, r.URL.Path)
 			mu.Unlock()
 
 			value := "PDP_rotado_1"
@@ -1362,6 +1364,12 @@ func TestCreateOutgoingPayments(t *testing.T) {
 	if rotationAuthorizations[1] != "GNAP PDP_rotado_1" {
 		t.Errorf("second rotation authorization = %q, want the token that just paid the platform", rotationAuthorizations[1])
 	}
+	// The second rotation goes to the management URL the FIRST one returned, not to
+	// the one the caller passed in: a regression that reused the original URL would
+	// try to rotate a token that is already dead.
+	if rotationPaths[1] != "/token/abc-2" {
+		t.Errorf("second rotation path = %q, want the management URL the first rotation returned (/token/abc-2)", rotationPaths[1])
+	}
 
 	// Both payments are identified, and the token handed back is the one the
 	// second rotation produced: every value that paid is dead.
@@ -1384,6 +1392,63 @@ func TestCreateOutgoingPayments(t *testing.T) {
 	wantToken := opclient.AccessToken{Value: "PDP_rotado_2", ManageURL: httpsURL(srv) + "/token/abc-3", ExpiresIn: 600}
 	if got.Token != wantToken {
 		t.Errorf("Token = %+v, want the token after the last rotation (%+v)", got.Token, wantToken)
+	}
+}
+
+// A rotation that fails AFTER a payment was made must not hide the payment: the
+// money moved, and a caller that only saw the error could not record which
+// outgoing payment it has to account for.
+func TestCreateOutgoingPaymentsKeepsThePaymentsAlreadyMadeWhenARotationFails(t *testing.T) {
+	keyPath, kid := newKey(t)
+
+	var payments, rotations int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/outgoing-payments"):
+			payments++
+			wallet := "https://" + r.Host + strings.TrimSuffix(r.URL.Path, "/outgoing-payments")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, outgoingPaymentResponse(
+				wallet+"/outgoing-payments/op-"+fmt.Sprint(payments),
+				wallet,
+				"https://"+r.Host+"/quotes/q-1",
+			))
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/token/"):
+			rotations++
+			if rotations == 2 {
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprint(w, `{"error":"la rotacion se cayo"}`)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"access_token":{"access":[],"value":"PDP_rotado_1","manage":"https://%s/token/abc-2","expires_in":600}}`, r.Host)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	client, err := opclient.New(opclient.Config{WalletAddressURL: httpsURL(srv) + "/app-cajadebarrio", PrivateKeyPath: keyPath, KeyID: kid})
+	if err != nil {
+		t.Fatalf("New() returned an error: %v", err)
+	}
+
+	got, err := client.CreateOutgoingPayments(context.Background(), opclient.CreateOutgoingPaymentsParams{
+		ClientWalletAddress: httpsURL(srv) + "/laura-cajadebarrio",
+		StoreQuoteURL:       httpsURL(srv) + "/quotes/q-1",
+		PlatformQuoteURL:    httpsURL(srv) + "/quotes/q-2",
+		Token:               opclient.AccessToken{Value: "PDP_aprobado_1", ManageURL: httpsURL(srv) + "/token/abc-1", ExpiresIn: 600},
+	})
+	if err == nil {
+		t.Fatal("CreateOutgoingPayments() reported success with a rotation that failed, want an error")
+	}
+	if !strings.Contains(got.Store.URL, "/outgoing-payments/op-") || !strings.Contains(got.Platform.URL, "/outgoing-payments/op-") {
+		t.Errorf("the payments that were made were lost: got %+v, want both outgoing payment URLs so the caller can record them", got)
+	}
+	if got.Store.URL == got.Platform.URL {
+		t.Errorf("both payments report the same URL %q, and they are different payments", got.Store.URL)
 	}
 }
 
@@ -1774,7 +1839,7 @@ func TestWaitForIncomingPayment(t *testing.T) {
 
 		client := newClient(t, srv)
 		url := httpsURL(srv) + "/incoming-payments/ip-1"
-		_, err := client.WaitForIncomingPayment(context.Background(), opclient.WaitForIncomingPaymentParams{
+		status, err := client.WaitForIncomingPayment(context.Background(), opclient.WaitForIncomingPaymentParams{
 			IncomingPaymentURL: url,
 			AccessToken:        "token-tienda",
 			Timeout:            120 * time.Millisecond,
@@ -1783,11 +1848,13 @@ func TestWaitForIncomingPayment(t *testing.T) {
 		if err == nil {
 			t.Fatal("WaitForIncomingPayment() reported success without proof of completion, want an error")
 		}
+		// The status itself must not say completed: a caller that ignored the error and
+		// looked only at the value must not find an authorization to deliver.
+		if status.Completed {
+			t.Error("WaitForIncomingPayment() answered Completed = true on a timeout, and nothing completed")
+		}
 		if !strings.Contains(err.Error(), url) {
 			t.Errorf("error %q does not name the incoming payment %s", err, url)
-		}
-		if strings.Contains(err.Error(), "completed=true") {
-			t.Errorf("error %q reports completion, and nothing completed", err)
 		}
 		mu.Lock()
 		pollCount := polls

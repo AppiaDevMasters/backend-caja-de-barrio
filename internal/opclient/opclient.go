@@ -867,7 +867,6 @@ type OutgoingPayment struct {
 	URL           string
 	DebitAmount   Amount
 	ReceiveAmount Amount
-	Failed        bool
 }
 
 // OutgoingPayments are the two payments of one withdrawal, with the access
@@ -885,6 +884,9 @@ type OutgoingPayments struct {
 // rotates the token, creates the platform's outgoing payment with the rotated
 // value, and rotates it once more, so the caller stores a token that has not
 // paid anything yet.
+// When a rotation fails after a payment was made, the returned value carries the
+// payments that were made and the error says which one: the money moved, and a
+// caller that could not see it could not record it either.
 func (c *Client) CreateOutgoingPayments(ctx context.Context, params CreateOutgoingPaymentsParams) (OutgoingPayments, error) {
 	// Everything is validated before the first payment, so a bad parameter
 	// cannot leave one payment made and one missing.
@@ -915,17 +917,22 @@ func (c *Client) CreateOutgoingPayments(ctx context.Context, params CreateOutgoi
 
 	rotated, err := c.RotateAccessToken(ctx, params.Token.ManageURL, params.Token.Value)
 	if err != nil {
-		return OutgoingPayments{}, fmt.Errorf("opclient: after paying the store: %w", err)
+		// The store was already paid: the money moved, so the payment travels back
+		// with the error instead of being thrown away.
+		return OutgoingPayments{Store: store}, fmt.Errorf("opclient: the store was paid (%s) and rotating its token failed: %w", store.URL, err)
 	}
 
 	platform, err := c.createOutgoingPayment(ctx, "the platform", clientWallet, params.PlatformQuoteURL, rotated.Value)
 	if err != nil {
-		return OutgoingPayments{}, err
+		return OutgoingPayments{Store: store}, err
 	}
 
 	final, err := c.RotateAccessToken(ctx, rotated.ManageURL, rotated.Value)
 	if err != nil {
-		return OutgoingPayments{}, fmt.Errorf("opclient: after paying the platform: %w", err)
+		// Both payments were made, so both travel back with the error along with the
+		// token the second one used: what is missing is a fresh rotation, not the
+		// record of what was paid.
+		return OutgoingPayments{Store: store, Platform: platform, Token: rotated}, fmt.Errorf("opclient: the platform was paid (%s) and rotating its token failed: %w", platform.URL, err)
 	}
 
 	return OutgoingPayments{Store: store, Platform: platform, Token: final}, nil
@@ -963,7 +970,6 @@ func (c *Client) createOutgoingPayment(ctx context.Context, role, clientWallet, 
 		URL:           *payment.Id,
 		DebitAmount:   toAmount(payment.DebitAmount),
 		ReceiveAmount: toAmount(payment.ReceiveAmount),
-		Failed:        payment.Failed != nil && *payment.Failed,
 	}, nil
 }
 
