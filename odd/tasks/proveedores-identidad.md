@@ -128,6 +128,7 @@ superficie, que no conoce personas, tiendas, reservas ni pagos.
 | V2 | — | Verificacion independiente y correccion de los defectos confirmados por medicion | ambos | `306f4fb`, `ffa93fa` |
 | V3 | S9,S10,S11 | `internal/api`: montaje de `/internal` con `Register` y `StripPrefix`, middleware `X-Servicio-Token` con comparacion en tiempo constante, envoltura `{error:{codigo,mensaje}}` y la tabla de veintiun codigos | `internal/api` | `c2624c5` |
 | V4 | S9,S10 | `internal/api`: cinco defectos que encontro la verificacion independiente, medidos antes de aceptarlos (la base pelada sin guard, los 404 y 405 del mux en texto plano, un codigo inventado que llegaba al agente, un `*Error` nil que hacia panic, y `Handler()` sin recortar la base) mas las pruebas que el verificador llamo debiles | `internal/api` | `dee2317` |
+| V5 | S9,S10 | `internal/api`: redaccion de credenciales en el log (`redact` y `errorText`), con el cierre en la raiz del `panic` por `*Error` nil tipado que la propia suite cazo al introducirla | `internal/api` | `f4933b9` |
 
 La primera rebanada esta cerrada, verde y commiteada. Las tres tareas de codigo cierran
 con commit de unidad de trabajo en `main`, con las pruebas junto al comportamiento, y
@@ -385,3 +386,40 @@ campos lleven algo, `Codes()` queda fijado en el orden del contrato, y el caso
 de 90.2% a 91.4%**, once paquetes en verde.
 
 Commiteado en `dee2317`.
+
+L11 (2026-10-16, un hallazgo de seguridad del par **en mi codigo**, aceptado y corregido).
+
+El par levanto un detalle de una corrida: `ERROR the internal surface failed without a
+classified error error="dial tcp 10.10.0.4:5432: connection refused, dsn
+postgres://rafiki:secreto@postgres"`. Su lectura es la correcta y la acepte sin
+deflectarla: **el cuerpo de error queda limpio, pero el log imprime el texto crudo del
+error**, y en una corrida real ese texto puede ser el `DATABASE_URL` verdadero. El
+contrato dice que el backend es el **unico** que guarda esas llaves, asi que el log no
+puede quedarse con una.
+
+Una precision que igual corresponde, porque el dato importa: esa cadena concreta es el DSN
+**falso** de mi propia prueba (`TestFailDoesNotLeakAnUnclassifiedError`), que existe
+justamente para probar que el cuerpo NO lo lleva. La objecion sigue siendo valida: el
+mecanismo es real y su alcance no depende de que el ejemplo sea inventado.
+
+`redact` enmascara las formas que este proyecto usa -- la contrasena del userinfo de una
+URL, un secreto con nombre (`password=`, `secret=`, `api_key=`) y un `Bearer <token>` -- y
+**conserva host y puerto**, porque una linea de log con el host tapado no se puede
+accionar. Esta documentado como **filtro de estas formas y no como escaneador general de
+secretos**, que es lo que es. Los tres sitios que registran errores pasan por el.
+
+**La regresion, y quien la cazo.** Mi propio cambio rompio la proteccion del nil tipado que
+ya habia arreglado antes: `redact(err.Error())` llama `Error()` sobre un `(*Error)(nil)` y
+desreferencia el receptor, asi que el `panic` volvio por otra puerta. **Lo cazo la suite en
+la corrida siguiente**, con el stack exacto (`(*Error).Error(0x0)` en `errors.go:148` desde
+`Fail`). Lo arregle en la raiz y no en el sitio de llamada: `(*Error).Error()` tolera un
+receptor nil, y `errorText` devuelve la cadena vacia para un error nil de cualquier forma,
+porque este paquete responde cada peticion de la superficie y **ninguno de sus caminos
+puede paniquear**. Cobertura 91.2%, dos decimas abajo por la rama nueva de `errorText`, que
+es lo esperable.
+
+Vale la pena dejarlo escrito: la prueba que atrapo esto es una de las que el verificador
+independiente habia llamado **debil** y que yo refuerce en el `L10`. El refuerzo pago en la
+misma sesion.
+
+Commiteado en `f4933b9`.
