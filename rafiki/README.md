@@ -112,9 +112,10 @@ en la wallet address dejaría de verificar.
 
 ## Variables del backend
 
-`docker-compose.yml` inyecta estas variables en el servicio `backend`. El repositorio no
-incluye un `.env.example` para el backend — el harness de Pi bloquea escribir archivos
-`.env.*` — así que la referencia son estos nombres:
+La referencia por variable está en [`../docs/configuracion.md`](../docs/configuracion.md),
+verificada contra los `os.Getenv` del código, y los nombres con valores de ejemplo en
+[`../env.example`](../env.example). Esta tabla es la vista del stack: qué inyecta
+`docker-compose.yml` en el servicio `backend` y de dónde sale cada valor.
 
 | Variable | Sale de | Para qué |
 | --- | --- | --- |
