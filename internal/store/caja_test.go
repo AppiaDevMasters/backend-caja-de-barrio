@@ -185,7 +185,10 @@ func TestLiberarVencidasAgainstADatabase(t *testing.T) {
 		t.Fatalf("Migrate() returned an error: %v", err)
 	}
 
-	ahora := time.Now().UTC()
+	// The day of the demo, in the EVENING: the reservation's cash belongs to the day
+	// the caller names, and a release that computes the day on its own can miss it
+	// when the demo's day and the UTC day are not the same day.
+	ahora := time.Date(2026, 10, 16, 20, 0, 0, 0, time.FixedZone("America/Bogota", -5*60*60))
 	remove := func() {
 		for _, statement := range []string{
 			"delete from reservas where id like 'tst_%'",

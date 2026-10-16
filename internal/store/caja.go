@@ -134,8 +134,8 @@ func (s *Store) Reservar(ctx context.Context, params ReservarParams) (Reserva, e
 	_, err = tx.Exec(ctx, `
 		insert into reservas (
 			id, tienda_id, persona_id, monto_cop, comision_tendero_cop,
-			comision_plataforma_cop, codigo, estado, creada_en, vence_en
-		) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			comision_plataforma_cop, codigo, estado, creada_en, vence_en, fecha_efectivo
+		) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date)`,
 		reserva.ID,
 		reserva.TiendaID,
 		reserva.PersonaID,
@@ -146,6 +146,10 @@ func (s *Store) Reservar(ctx context.Context, params ReservarParams) (Reserva, e
 		reserva.Estado,
 		reserva.CreadaEn,
 		reserva.VenceEn,
+		// The day of the cash it took, with the same expression the cash was found
+		// with. Recomputing it later from the timestamp is what a release cannot do
+		// without assuming a timezone.
+		params.Ahora,
 	)
 	if err != nil {
 		return Reserva{}, fmt.Errorf("store: writing the reservation %s: %w", reserva.ID, err)
@@ -190,7 +194,7 @@ func (s *Store) LiberarVencidas(ctx context.Context, ahora time.Time) (int, erro
 	// The rows are locked before they are read, so two releases cannot both give the
 	// same cash back to the store.
 	rows, err := tx.Query(ctx, `
-		select id, tienda_id, monto_cop, creada_en
+		select id, tienda_id, monto_cop, fecha_efectivo
 		from reservas
 		where estado = 'reservada' and vence_en <= $1
 		for update`, ahora)
@@ -201,7 +205,7 @@ func (s *Store) LiberarVencidas(ctx context.Context, ahora time.Time) (int, erro
 	type expirada struct {
 		tiendaID string
 		montoCOP int64
-		creadaEn time.Time
+		fecha    time.Time
 	}
 	var (
 		ids       []string
@@ -212,20 +216,20 @@ func (s *Store) LiberarVencidas(ctx context.Context, ahora time.Time) (int, erro
 			id       string
 			expirada expirada
 		)
-		if err := rows.Scan(&id, &expirada.tiendaID, &expirada.montoCOP, &expirada.creadaEn); err != nil {
+		if err := rows.Scan(&id, &expirada.tiendaID, &expirada.montoCOP, &expirada.fecha); err != nil {
 			rows.Close()
 
 			return 0, fmt.Errorf("store: reading the expired reservations: %w", err)
 		}
 		ids = append(ids, id)
 
-		// The cash of a reservation belongs to the day it was made for, so the release
-		// goes back to that day and not to today.
-		dia := expirada.creadaEn.UTC().Truncate(24 * time.Hour)
+		// The day is the one the reservation STORED, not one computed here: the cash is
+		// given back to the day it was taken from, and recomputing that day would need
+		// the timezone the caller used, which this layer does not know.
 		if porTienda[expirada.tiendaID] == nil {
 			porTienda[expirada.tiendaID] = map[time.Time]int64{}
 		}
-		porTienda[expirada.tiendaID][dia] += expirada.montoCOP
+		porTienda[expirada.tiendaID][expirada.fecha] += expirada.montoCOP
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -241,10 +245,13 @@ func (s *Store) LiberarVencidas(ctx context.Context, ahora time.Time) (int, erro
 
 	for tiendaID, porDia := range porTienda {
 		for dia, monto := range porDia {
+			// No cast on the day: the value came out of a date column, so comparing it
+			// with the date column keeps the two sides of the comparison in the same
+			// type and out of reach of a session timezone.
 			if _, err := tx.Exec(ctx, `
 				update efectivo_disponible
 				set reservado_cop = reservado_cop - $3
-				where tienda_id = $1 and fecha = $2::date`, tiendaID, dia, monto); err != nil {
+				where tienda_id = $1 and fecha = $2`, tiendaID, dia, monto); err != nil {
 				return 0, fmt.Errorf("store: giving the cash of %s back: %w", tiendaID, err)
 			}
 		}
