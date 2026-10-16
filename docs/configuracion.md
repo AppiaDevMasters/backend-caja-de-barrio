@@ -48,5 +48,7 @@ seguridad, asi que esta tabla es la fuente de los nombres. Para crear el archivo
 literal, con los nombres y sin valores:
 
 ```bash
-grep -oE '`[A-Z_]+`' docs/configuracion.md | tr -d '`' | sort -u | sed 's/$/=/' > .env.example
+# Solo los nombres de la primera columna de las tablas, que son los que lee el
+# backend. Las demas nombres que aparecen en el texto son los de rafiki/.env.
+grep -oE '^\| `[A-Z_]+`' docs/configuracion.md | grep -oE '[A-Z_]+' | sort -u | sed 's/$/=/' > .env.example
 ```
