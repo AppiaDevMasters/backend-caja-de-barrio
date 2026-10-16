@@ -199,19 +199,35 @@ func (c *Client) Whoami(ctx context.Context) (Whoami, error) {
 }
 
 // canonicalBody renders the body in the canonical JSON form Rafiki hashes:
-// sorted keys, no whitespace and no HTML escaping. Go sorts map keys, and
-// turning HTML escaping off keeps <, > and & literal, so the bytes on the wire
-// are the same bytes Rafiki canonicalizes again before hashing them. That holds
-// while the payload holds strings, integers and nested maps of those.
+// sorted keys at every level, no whitespace and no HTML escaping.
+//
+// It normalizes through generic values on purpose. Go sorts the keys of a map but
+// keeps the declaration order of a struct, so encoding a nested struct straight
+// to JSON would produce a body that differs from the canonical form Rafiki
+// re-computes over the body it parsed, and the signature would not match.
+//
+// Normalizing goes through JSON scalars, so a payload must not carry an integer
+// beyond 2^53. Amounts travel as strings (the UInt64 type encodes them that way)
+// and everything else here is a small integer or a string.
 func canonicalBody(query string, variables map[string]any) ([]byte, error) {
 	if variables == nil {
 		variables = map[string]any{}
 	}
 
+	direct, err := json.Marshal(map[string]any{"query": query, "variables": variables})
+	if err != nil {
+		return nil, fmt.Errorf("rafikiadmin: encoding the request body: %w", err)
+	}
+
+	var generic any
+	if err := json.Unmarshal(direct, &generic); err != nil {
+		return nil, fmt.Errorf("rafikiadmin: normalizing the request body: %w", err)
+	}
+
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)
 	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(map[string]any{"query": query, "variables": variables}); err != nil {
+	if err := encoder.Encode(generic); err != nil {
 		return nil, fmt.Errorf("rafikiadmin: encoding the request body: %w", err)
 	}
 

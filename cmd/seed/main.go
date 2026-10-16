@@ -21,6 +21,7 @@ import (
 	"syscall"
 
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/config"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/opkeys"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/rafikiadmin"
 )
 
@@ -35,6 +36,10 @@ const (
 // smallest unit of the asset: with scale 2 this is 10.000.000 COP.
 const assetLiquidityTarget rafikiadmin.UInt64 = 1_000_000_000
 
+// appAddress is the wallet address this backend acts as: the identity whose key
+// signs its Open Payments requests.
+const appAddress = "app-cajadebarrio"
+
 // actor is one wallet address the demo needs: both sides of a withdrawal and the
 // application identity that signs the Open Payments calls.
 type actor struct {
@@ -45,7 +50,7 @@ type actor struct {
 var actors = []actor{
 	{address: "tienda-cajadebarrio", publicName: "Don Jaime - Tienda"},
 	{address: "laura-cajadebarrio", publicName: "Laura"},
-	{address: "app-cajadebarrio", publicName: "Caja de Barrio"},
+	{address: appAddress, publicName: "Caja de Barrio"},
 }
 
 func main() {
@@ -100,6 +105,7 @@ func run() error {
 	}
 	fmt.Printf("tenant setting %s = %s\n", rafikiadmin.SettingWalletAddressURL, base)
 
+	addresses := make(map[string]rafikiadmin.WalletAddress, len(actors))
 	for _, a := range actors {
 		addressURL := walletAddressURL(base, a.address)
 
@@ -112,8 +118,32 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("ensuring the wallet address %s: %w", addressURL, err)
 		}
+		addresses[a.address] = address
 		fmt.Printf("wallet address %s id %s %s\n", addressURL, address.ID, address.PublicName)
 	}
+
+	// The client identity: the key that signs this backend's Open Payments
+	// requests, registered on the wallet address it acts as. Without it no signed
+	// request from this backend can be verified.
+	key, err := opkeys.LoadOrGenerate(cfg.OP.PrivateKeyPath)
+	if err != nil {
+		return fmt.Errorf("loading the Open Payments client key: %w", err)
+	}
+
+	kid := cfg.OP.KeyID
+	if kid == "" {
+		kid = key.Kid()
+	}
+
+	app := addresses[appAddress]
+	if err := client.EnsureWalletAddressKey(ctx, rafikiadmin.CreateWalletAddressKeyInput{
+		WalletAddressID: app.ID,
+		JWK:             rafikiadmin.Ed25519JWK(kid, key.PublicKeyBase64()),
+		IdempotencyKey:  "client-key:" + kid,
+	}); err != nil {
+		return fmt.Errorf("registering the client key %s: %w", kid, err)
+	}
+	fmt.Printf("client key %s registered on %s, private key at %s\n", kid, app.Address, cfg.OP.PrivateKeyPath)
 
 	return nil
 }

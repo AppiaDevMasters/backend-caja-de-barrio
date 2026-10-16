@@ -114,3 +114,29 @@ func TestLoadDefaultsTheOpenPaymentsURL(t *testing.T) {
 		t.Errorf("OpenPaymentsURL = %q, want %q", cfg.Rafiki.OpenPaymentsURL, config.DefaultOpenPaymentsURL)
 	}
 }
+
+func TestLoadReadsTheOpenPaymentsClientSettings(t *testing.T) {
+	t.Setenv("OP_KEY_ID", "mi-llave")
+	t.Setenv("OP_PRIVATE_KEY_PATH", "/ruta/clave.pem")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() returned an error: %v", err)
+	}
+	want := config.OP{KeyID: "mi-llave", PrivateKeyPath: "/ruta/clave.pem"}
+	if cfg.OP != want {
+		t.Errorf("OP = %+v, want %+v", cfg.OP, want)
+	}
+}
+
+func TestLoadDefaultsTheOpenPaymentsPrivateKeyPath(t *testing.T) {
+	t.Setenv("OP_PRIVATE_KEY_PATH", "")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() returned an error: %v", err)
+	}
+	if cfg.OP.PrivateKeyPath != config.DefaultOPPrivateKeyPath {
+		t.Errorf("PrivateKeyPath = %q, want %q", cfg.OP.PrivateKeyPath, config.DefaultOPPrivateKeyPath)
+	}
+}

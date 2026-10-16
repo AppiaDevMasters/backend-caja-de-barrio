@@ -36,6 +36,20 @@ const DefaultRafikiAdminURL = "http://localhost:3001/graphql"
 // server, which listens on plain http.
 const DefaultOpenPaymentsURL = "https://localhost:3000"
 
+// DefaultOPPrivateKeyPath is where the Open Payments client key is stored when
+// OP_PRIVATE_KEY_PATH is not set. The path ends in .pem, which the repository
+// .gitignore covers, so the key never reaches the history.
+const DefaultOPPrivateKeyPath = "keys/op-private-key.pem"
+
+// OP holds the Open Payments client settings: the key this backend signs its
+// requests with and the name that key is registered under.
+type OP struct {
+	// KeyID is optional. When it is empty the key names itself with its RFC 7638
+	// thumbprint.
+	KeyID          string
+	PrivateKeyPath string
+}
+
 // Rafiki holds the Admin API settings. Load reads them but does not require
 // them: /health has to answer before Rafiki is configured, and the component
 // that needs the secret is the one that reports it missing.
@@ -52,6 +66,7 @@ type Config struct {
 	Addr     string
 	LogLevel Level
 	Rafiki   Rafiki
+	OP       OP
 }
 
 // Load reads the environment and validates it. When a value cannot be used it
@@ -71,6 +86,10 @@ func Load() (Config, error) {
 			OpenPaymentsURL: defaultString(os.Getenv("RAFIKI_OPEN_PAYMENTS_URL"), DefaultOpenPaymentsURL),
 			TenantID:        strings.TrimSpace(os.Getenv("RAFIKI_TENANT_ID")),
 			AdminAPISecret:  strings.TrimSpace(os.Getenv("RAFIKI_ADMIN_API_SECRET")),
+		},
+		OP: OP{
+			KeyID:          strings.TrimSpace(os.Getenv("OP_KEY_ID")),
+			PrivateKeyPath: defaultString(os.Getenv("OP_PRIVATE_KEY_PATH"), DefaultOPPrivateKeyPath),
 		},
 	}, nil
 }
