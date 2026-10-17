@@ -27,6 +27,7 @@ func leerReserva(w http.ResponseWriter, r *http.Request, deps Dependencias, id s
 
 		return store.ReservaRetiro{}, false
 	}
+	aplicarModo(deps, &reserva)
 
 	return reserva, true
 }
@@ -53,7 +54,7 @@ func crearCobros(deps Dependencias) http.HandlerFunc {
 
 			return
 		}
-		if (body.WalletTienda != "" && !mismaWallet(body.WalletTienda, reserva.WalletTienda)) ||
+		if (body.WalletTienda != "" && !deps.Config.Testnet && !mismaWallet(body.WalletTienda, reserva.WalletTienda)) ||
 			(body.MontoCOP != 0 && body.MontoCOP != reserva.MontoCOP) {
 			api.Fail(w, api.Errorf(api.CodeDatosNoCoinciden, "La billetera o el monto no coinciden con la reserva."))
 
@@ -67,8 +68,32 @@ func crearCobros(deps Dependencias) http.HandlerFunc {
 				"tienda_recibe_cop": tiendaRecibe, "caja_de_barrio_recibe_cop": reserva.ComisionPlataformaCOP,
 			}
 		}
-		if reserva.IncomingPaymentURL != nil && reserva.CobroPlataformaURL != nil {
-			api.JSON(w, http.StatusCreated, respuesta(*reserva.IncomingPaymentURL, *reserva.CobroPlataformaURL))
+		if reserva.IncomingPaymentURL != nil && (reserva.CobroPlataformaURL != nil || deps.Config.Testnet) {
+			plataforma := ""
+			if reserva.CobroPlataformaURL != nil {
+				plataforma = *reserva.CobroPlataformaURL
+			}
+			api.JSON(w, http.StatusCreated, respuesta(*reserva.IncomingPaymentURL, plataforma))
+
+			return
+		}
+
+		// Testnet: one collection point, the store's. Caja de Barrio's 1% is kept in the
+		// internal ledger when the payment closes, so there is one APROBAR and one payment.
+		if deps.Config.Testnet {
+			cobro, err := deps.OpenPayments.CreateIncomingPayment(r.Context(), reserva.WalletTienda, tiendaRecibe)
+			if err != nil {
+				slog.Error("pagos: creating the testnet collection point", "reserva_id", reserva.ID, "error", err)
+				api.Fail(w, api.Errorf(api.CodeProveedor, "No se pudo crear el cobro de la tienda en el testnet."))
+
+				return
+			}
+			if err := deps.Datos.GuardarCobros(r.Context(), reserva.ID, cobro.URL, ""); err != nil {
+				api.Fail(w, err)
+
+				return
+			}
+			api.JSON(w, http.StatusCreated, respuesta(cobro.URL, ""))
 
 			return
 		}
@@ -124,7 +149,8 @@ func cotizar(deps Dependencias) http.HandlerFunc {
 
 			return
 		}
-		if !existe || reserva.IncomingPaymentURL == nil || reserva.CobroPlataformaURL == nil {
+		aplicarModo(deps, &reserva)
+		if !existe || reserva.IncomingPaymentURL == nil || (reserva.CobroPlataformaURL == nil && !deps.Config.Testnet) {
 			api.Fail(w, api.Errorf(api.CodeNoEncontrado, "Esa reserva no tiene cobros todavía: primero hay que crear el cobro."))
 
 			return
@@ -134,8 +160,14 @@ func cotizar(deps Dependencias) http.HandlerFunc {
 
 			return
 		}
-		if body.WalletCliente != "" && !mismaWallet(body.WalletCliente, reserva.WalletCliente) {
+		if body.WalletCliente != "" && !deps.Config.Testnet && !mismaWallet(body.WalletCliente, reserva.WalletCliente) {
 			api.Fail(w, api.Errorf(api.CodeDatosNoCoinciden, "La billetera no es la de la persona de la reserva."))
+
+			return
+		}
+
+		if deps.Config.Testnet {
+			cotizarTestnet(w, r, deps, reserva)
 
 			return
 		}
@@ -297,13 +329,13 @@ func pagar(deps Dependencias) http.HandlerFunc {
 		case !reserva.RiesgoOK:
 			api.Fail(w, api.Errorf(api.CodeSinRiesgo, "No se paga sin visto bueno de riesgo."))
 			return
-		case reserva.QuoteURL == nil || reserva.QuotePlataformaURL == nil || reserva.Debito == nil:
+		case reserva.QuoteURL == nil || (reserva.QuotePlataformaURL == nil && !deps.Config.Testnet) || reserva.Debito == nil:
 			api.Fail(w, api.Errorf(api.CodeSinAprobacion, "Todavía no hay una cotización aprobada."))
 			return
 		case reserva.QuoteVenceEn != nil && ahora.After(*reserva.QuoteVenceEn):
 			api.Fail(w, api.Errorf(api.CodeCotizacionVencida, "La cotización venció; hay que cotizar de nuevo."))
 			return
-		case !tieneCupo || cupo.AprobadoEn == nil || cupo.AccessToken == "":
+		case !tieneCupo || cupo.AprobadoEn == nil || cupo.AccessToken == "" || !mismaWallet(cupo.WalletAddress, reserva.WalletCliente):
 			api.Fail(w, api.Errorf(api.CodeSinCupo, "La persona no ha aprobado su cupo en la billetera."))
 			return
 		case cupo.Usado+*reserva.Debito > cupo.Limite+1e-9:
@@ -324,7 +356,7 @@ func pagar(deps Dependencias) http.HandlerFunc {
 
 		// A wallet of this ASE pays from the virtual wallet: the balance must cover it
 		// BEFORE any payment exists.
-		delASE := esDelASE(deps, reserva.WalletCliente)
+		delASE := !deps.Config.Testnet && esDelASE(deps, reserva.WalletCliente)
 		if delASE {
 			billetera, err := deps.Datos.MovimientosDe(r.Context(), reserva.WalletCliente)
 			if err != nil {
@@ -344,6 +376,12 @@ func pagar(deps Dependencias) http.HandlerFunc {
 		if err != nil {
 			slog.Error("pagos: preparing the cupo token", "persona_id", cupo.PersonaID, "error", err)
 			api.Fail(w, api.Errorf(api.CodeProveedor, "No se pudo usar el cupo aprobado; hay que aprobarlo de nuevo."))
+
+			return
+		}
+
+		if deps.Config.Testnet {
+			pagarTestnet(w, r, deps, reserva, cupo, token)
 
 			return
 		}
@@ -497,7 +535,7 @@ func cerrarSiLlego(ctx context.Context, deps Dependencias, reserva store.Reserva
 	if reserva.Debito != nil {
 		debito = *reserva.Debito
 	}
-	if cerrada || reserva.Estado == "pagada" || reserva.Estado == "entregada" {
+	if !deps.Config.Testnet && (cerrada || reserva.Estado == "pagada" || reserva.Estado == "entregada") {
 		retirarLiquidezCobros(ctx, deps, reserva)
 	}
 	if cerrada {
@@ -508,6 +546,11 @@ func cerrarSiLlego(ctx context.Context, deps Dependencias, reserva store.Reserva
 			{normalizarWallet(reserva.WalletTienda), "cobro_retiro", esperado},
 			{deps.Config.WalletPlataforma, "comision_plataforma", reserva.ComisionPlataformaCOP},
 		} {
+			// Testnet: the store's real wallet already holds the money; only Caja de Barrio's 1%
+			// goes to the internal ledger.
+			if deps.Config.Testnet && abono.tipo == "cobro_retiro" {
+				continue
+			}
 			id, err := nuevoID("mov_")
 			if err == nil {
 				err = deps.Datos.RegistrarMovimiento(ctx, id, abono.wallet, abono.tipo, abono.monto, reserva.ID)
@@ -556,6 +599,7 @@ func estadoCobro(deps Dependencias) http.HandlerFunc {
 
 			return
 		}
+		aplicarModo(deps, &reserva)
 		if !existe {
 			api.Fail(w, api.Errorf(api.CodeNoEncontrado, "No existe ese cobro."))
 
@@ -571,7 +615,7 @@ func estadoCobro(deps Dependencias) http.HandlerFunc {
 		}
 		pesos := int64(math.Round(float64(recibido) / math.Pow10(escala)))
 		completado := pesos >= reserva.MontoCOP+reserva.ComisionTenderoCOP
-		if completado && reserva.Estado != "reservada" && reserva.OutgoingPaymentID != nil {
+		if completado && !deps.Config.Testnet && reserva.Estado != "reservada" && reserva.OutgoingPaymentID != nil {
 			retirarLiquidezCobros(r.Context(), deps, reserva)
 		}
 		if completado && reserva.Estado == "reservada" && reserva.OutgoingPaymentID != nil {

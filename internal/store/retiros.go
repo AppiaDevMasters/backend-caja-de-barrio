@@ -158,9 +158,9 @@ func (s *Store) BloquearPorRiesgo(ctx context.Context, alertaID, personaID, tien
 func (s *Store) GuardarCobros(ctx context.Context, reservaID, tiendaURL, plataformaURL string) error {
 	const query = `
 		insert into retiros (reserva_id, incoming_payment_url, cobro_plataforma_url)
-		values ($1, $2, $3)
+		values ($1, $2, nullif($3, ''))
 		on conflict (reserva_id) do update
-		set incoming_payment_url = $2, cobro_plataforma_url = $3, actualizado_en = now()`
+		set incoming_payment_url = $2, cobro_plataforma_url = nullif($3, ''), actualizado_en = now()`
 	if _, err := s.pool.Exec(ctx, query, reservaID, tiendaURL, plataformaURL); err != nil {
 		return fmt.Errorf("store: recording the collection points of %s: %w", reservaID, err)
 	}
@@ -178,7 +178,7 @@ func (s *Store) GuardarCotizacion(ctx context.Context, reservaID, quoteURL, quot
 	defer tx.Rollback(ctx) //nolint:errcheck // a rollback after commit is a no-op
 
 	if _, err := tx.Exec(ctx, `
-		update retiros set quote_url = $2, quote_plataforma_url = $3, debito = $4, moneda = $5, quote_vence_en = $6,
+		update retiros set quote_url = $2, quote_plataforma_url = nullif($3, ''), debito = $4, moneda = $5, quote_vence_en = $6,
 		       actualizado_en = now()
 		where reserva_id = $1`, reservaID, quoteURL, quotePlataformaURL, debito, moneda, vence); err != nil {
 		return fmt.Errorf("store: recording the quote of %s: %w", reservaID, err)
@@ -244,7 +244,7 @@ func (s *Store) GuardarPagos(ctx context.Context, reservaID, outTienda, outPlata
 		return fmt.Errorf("store: encoding the payment of %s: %w", reservaID, err)
 	}
 	if _, err := s.pool.Exec(ctx, `
-		update retiros set outgoing_payment_id = $2, outgoing_plataforma_id = $3, resultado = $4, actualizado_en = now()
+		update retiros set outgoing_payment_id = $2, outgoing_plataforma_id = nullif($3, ''), resultado = $4, actualizado_en = now()
 		where reserva_id = $1`, reservaID, outTienda, outPlataforma, cuerpo); err != nil {
 		return fmt.Errorf("store: recording the payment of %s: %w", reservaID, err)
 	}
@@ -303,6 +303,8 @@ type CupoGrant struct {
 	ServerNonce   string
 	AuthServer    string
 	AprobadoEn    *time.Time
+	RedirectURL   string
+	CreadoEn      time.Time
 }
 
 // GuardarCupoPendiente records a requested grant. A person has one cupo, so asking
@@ -310,15 +312,16 @@ type CupoGrant struct {
 func (s *Store) GuardarCupoPendiente(ctx context.Context, c CupoGrant) error {
 	const query = `
 		insert into cupos (persona_id, grant_id, wallet_address, limite, moneda, intervalo, continue_uri, continue_token,
-		                   nonce, server_nonce, auth_server)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		                   nonce, server_nonce, auth_server, redirect_url)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		on conflict (persona_id) do update
 		set grant_id = $2, wallet_address = $3, limite = $4, moneda = $5, intervalo = $6, continue_uri = $7,
-		    continue_token = $8, nonce = $9, server_nonce = $10, auth_server = $11, access_token = null,
+		    continue_token = $8, nonce = $9, server_nonce = $10, auth_server = $11, redirect_url = $12, creado_en = now(),
+		    access_token = null,
 		    token_manage_url = null, token_vence_en = null, aprobado_en = null, usado = 0
-		where cupos.aprobado_en is null`
+		where cupos.aprobado_en is null or cupos.wallet_address <> excluded.wallet_address`
 	tag, err := s.pool.Exec(ctx, query, c.PersonaID, c.GrantID, c.WalletAddress, c.Limite, c.Moneda, c.Intervalo,
-		c.ContinueURI, c.ContinueToken, c.ClientNonce, c.ServerNonce, c.AuthServer)
+		c.ContinueURI, c.ContinueToken, c.ClientNonce, c.ServerNonce, c.AuthServer, c.RedirectURL)
 	if err != nil {
 		return fmt.Errorf("store: recording the cupo of %s: %w", c.PersonaID, err)
 	}
@@ -336,14 +339,14 @@ const cupoSelect = `
 	select persona_id, grant_id, wallet_address, limite::float8, moneda, intervalo, usado::float8,
 	       coalesce(access_token, ''), coalesce(token_manage_url, ''), token_vence_en,
 	       coalesce(continue_uri, ''), coalesce(continue_token, ''), coalesce(nonce, ''), coalesce(server_nonce, ''),
-	       coalesce(auth_server, ''), aprobado_en
+	       coalesce(auth_server, ''), aprobado_en, coalesce(redirect_url, ''), creado_en
 	from cupos`
 
 func scanCupo(row pgx.Row) (CupoGrant, error) {
 	var c CupoGrant
 	err := row.Scan(&c.PersonaID, &c.GrantID, &c.WalletAddress, &c.Limite, &c.Moneda, &c.Intervalo, &c.Usado,
 		&c.AccessToken, &c.ManageURL, &c.TokenVenceEn, &c.ContinueURI, &c.ContinueToken, &c.ClientNonce,
-		&c.ServerNonce, &c.AuthServer, &c.AprobadoEn)
+		&c.ServerNonce, &c.AuthServer, &c.AprobadoEn, &c.RedirectURL, &c.CreadoEn)
 
 	return c, err
 }

@@ -3,6 +3,7 @@ package pagos_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,16 +26,27 @@ const (
 )
 
 type memoria struct {
-	reserva      store.ReservaRetiro
-	persona      store.Persona
-	cupo         *store.CupoGrant
-	aprobaciones map[string]bool
-	movimientos  map[string]int64
-	pagados      int
+	reserva        store.ReservaRetiro
+	persona        store.Persona
+	cupo           *store.CupoGrant
+	aprobaciones   map[string]bool
+	movimientos    map[string]int64
+	pagados        int
+	prefijoExterno string
 }
 
 func (m *memoria) BilleteraDe(context.Context, string) (store.Billetera, bool, error) {
 	return store.Billetera{}, false, nil
+}
+func (m *memoria) PagosExternosDe(_ context.Context, whatsapp, prefijo string) (string, []store.PagoExterno, error) {
+	m.prefijoExterno = prefijo
+	switch whatsapp {
+	case "573001112233":
+		return "tienda", []store.PagoExterno{{ReservaID: "res_1", RecibidoCOP: 203_600, Cliente: "Cristian"}}, nil
+	case "573506477716":
+		return "persona", []store.PagoExterno{{ReservaID: "res_1", Debito: 52.14, Moneda: "USD", RecibidoCOP: 203_600, Tienda: "Tienda de Magno"}}, nil
+	}
+	return "", nil, nil
 }
 func (m *memoria) MovimientosDe(_ context.Context, wallet string) (store.Billetera, error) {
 	var saldo int64
@@ -66,11 +78,11 @@ func (m *memoria) BloquearPorRiesgo(context.Context, string, string, string, str
 	return nil
 }
 func (m *memoria) GuardarCobros(_ context.Context, _, tienda, plataforma string) error {
-	m.reserva.IncomingPaymentURL, m.reserva.CobroPlataformaURL = &tienda, &plataforma
+	m.reserva.IncomingPaymentURL, m.reserva.CobroPlataformaURL = &tienda, nulo(plataforma)
 	return nil
 }
 func (m *memoria) GuardarCotizacion(_ context.Context, _, q, qp string, debito float64, moneda string, vence time.Time) error {
-	m.reserva.QuoteURL, m.reserva.QuotePlataformaURL, m.reserva.Debito = &q, &qp, &debito
+	m.reserva.QuoteURL, m.reserva.QuotePlataformaURL, m.reserva.Debito = &q, nulo(qp), &debito
 	m.reserva.Moneda, m.reserva.QuoteVenceEn, m.reserva.AprobacionEn = &moneda, &vence, nil
 	return nil
 }
@@ -84,7 +96,7 @@ func (m *memoria) AprobacionDeQuote(_ context.Context, _, quote string) (bool, e
 	return m.aprobaciones[quote], nil
 }
 func (m *memoria) GuardarPagos(_ context.Context, _, out, outP string, resultado any) error {
-	m.reserva.OutgoingPaymentID, m.reserva.OutgoingPlataformaID = &out, &outP
+	m.reserva.OutgoingPaymentID, m.reserva.OutgoingPlataformaID = &out, nulo(outP)
 	m.reserva.Resultado, _ = json.Marshal(resultado)
 	return nil
 }
@@ -105,6 +117,7 @@ func (m *memoria) MarcarPagada(context.Context, string) (bool, error) {
 	return true, nil
 }
 func (m *memoria) GuardarCupoPendiente(_ context.Context, c store.CupoGrant) error {
+	c.CreadoEn = time.Now()
 	m.cupo = &c
 	return nil
 }
@@ -173,6 +186,42 @@ func (m *memoria) ReservasActivasDeTienda(context.Context, string) ([]store.Rese
 type openPaymentsFalso struct {
 	pagos   int
 	tokenes []string
+
+	// The testnet calls.
+	cobroUnico []string
+	quoteUnica []string
+	pagoUnico  int
+	sinFondos  bool
+}
+
+func nulo(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func (o *openPaymentsFalso) CreateIncomingPayment(_ context.Context, wallet string, monto int64) (opclient.IncomingPayment, error) {
+	o.cobroUnico = append(o.cobroUnico, wallet+"|"+itoa(monto))
+	return opclient.IncomingPayment{URL: wallet + "/incoming-payments/unico"}, nil
+}
+func (o *openPaymentsFalso) CreateQuoteByReceiver(_ context.Context, cliente, receiver string) (opclient.Quote, error) {
+	o.quoteUnica = append(o.quoteUnica, cliente+"|"+receiver)
+	return opclient.Quote{URL: cliente + "/quotes/unica",
+		DebitAmount:   opclient.Amount{Value: "5214", AssetCode: "USD", AssetScale: 2},
+		ReceiveAmount: opclient.Amount{Value: "20360000", AssetCode: "COP", AssetScale: 2},
+		ExpiresAt:     time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339)}, nil
+}
+func (o *openPaymentsFalso) CreateOutgoingPayment(_ context.Context, cliente, quote string, tok opclient.AccessToken) (opclient.OutgoingPayment, opclient.AccessToken, error) {
+	if o.sinFondos {
+		return opclient.OutgoingPayment{}, opclient.AccessToken{}, errors.New("opclient: creating the outgoing payment: 403 insufficient balance")
+	}
+	o.pagoUnico++
+	o.tokenes = append(o.tokenes, tok.Value)
+	return opclient.OutgoingPayment{URL: cliente + "/outgoing-payments/unico",
+			DebitAmount:   opclient.Amount{Value: "5214", AssetCode: "USD", AssetScale: 2},
+			ReceiveAmount: opclient.Amount{Value: "20360000", AssetCode: "COP", AssetScale: 2}},
+		opclient.AccessToken{Value: "tok-unico-rotado", ManageURL: "https://auth.interledger-test.dev/token/9", ExpiresIn: 600}, nil
 }
 
 func (o *openPaymentsFalso) ResolveWalletAddress(_ context.Context, w string) (opclient.WalletAddress, error) {
@@ -238,6 +287,12 @@ type escenario struct {
 
 func nuevoEscenario(t *testing.T) *escenario {
 	t.Helper()
+
+	return nuevoEscenarioCon(t, nil)
+}
+
+func nuevoEscenarioCon(t *testing.T, ajustar func(*pagos.Config)) *escenario {
+	t.Helper()
 	e := &escenario{
 		datos: &memoria{
 			persona: store.Persona{ID: "per_cristian", Whatsapp: "573506477716", WalletAddress: walletCristian, EstadoRegistro: "aprobada"},
@@ -255,12 +310,16 @@ func nuevoEscenario(t *testing.T) *escenario {
 	if err != nil {
 		t.Fatal(err)
 	}
+	config := pagos.Config{FinishURL: "https://agente.cajadebarrio.lat/op/finish", WalletPlataforma: walletApp,
+		AuthServerHash: "https://auth.cajadebarrio.lat/tenant", HostASE: "op.cajadebarrio.lat",
+		Secreto: []byte("secreto"), EsperaCobro: 10 * time.Millisecond, EsperaGrant: time.Millisecond}
+	if ajustar != nil {
+		ajustar(&config)
+	}
 	pagos.Register(server, pagos.Dependencias{
 		Datos: e.datos, OpenPayments: e.op, Liquidez: e.liquidez,
 		Cobros: func(context.Context, string) (int64, int, error) { return e.recibido, 2, nil },
-		Config: pagos.Config{FinishURL: "https://agente.cajadebarrio.lat/op/finish", WalletPlataforma: walletApp,
-			AuthServerHash: "https://auth.cajadebarrio.lat/tenant", HostASE: "op.cajadebarrio.lat",
-			Secreto: []byte("secreto"), EsperaCobro: 10 * time.Millisecond, EsperaGrant: time.Millisecond},
+		Config: config,
 	})
 	mux := http.NewServeMux()
 	server.Register(mux)

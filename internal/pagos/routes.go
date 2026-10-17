@@ -17,12 +17,13 @@ import (
 type Saldos interface {
 	BilleteraDe(ctx context.Context, whatsapp string) (store.Billetera, bool, error)
 	MovimientosDe(ctx context.Context, wallet string) (store.Billetera, error)
+	PagosExternosDe(ctx context.Context, whatsapp, prefijoPago string) (string, []store.PagoExterno, error)
 }
 
 // Register mounts the virtual wallet and, when Open Payments is configured, the
 // payment routes.
 func Register(server *api.Server, deps Dependencias) {
-	server.Handle("GET /pagos/saldo", saldo(deps.Datos))
+	server.Handle("GET /pagos/saldo", saldo(deps))
 	server.Handle("GET /caja/reservas/{id}", consultarReserva(deps))
 	server.Handle("POST /caja/reservas/{id}/riesgo", evaluarRiesgo(deps))
 	server.Handle("POST /caja/reservas/{id}/cancelar", cancelar(deps))
@@ -62,11 +63,18 @@ type saldoBody struct {
 	Movimientos   []movimientoBody `json:"movimientos"`
 }
 
-func saldo(saldos Saldos) http.HandlerFunc {
+func saldo(deps Dependencias) http.HandlerFunc {
+	saldos := deps.Datos
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		whatsapp := strings.TrimSpace(r.URL.Query().Get("whatsapp"))
 		if whatsapp == "" {
 			api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "Falta el whatsapp."))
+
+			return
+		}
+		if deps.Config.Testnet {
+			saldoTestnet(w, r, deps, whatsapp)
 
 			return
 		}

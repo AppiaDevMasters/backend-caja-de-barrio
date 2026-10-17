@@ -11,6 +11,8 @@ escribieron, sin resumir ni corregir.
   17 de octubre, con Claude Code en la sesion del dueño del agente y los MCP:
   despliegue en el VPS, Didit y Verifik, `/admin` y el alta del tendero, y el pago
   con Open Payments hasta la entrega.
+- `06-modo-testnet.md`: el modo `OP_MODO=testnet` para la demo de interoperabilidad
+  (USD a COP en el testnet de Interledger).
 
 ## Que no hay, y por que
 
