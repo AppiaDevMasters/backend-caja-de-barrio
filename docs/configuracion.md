@@ -56,6 +56,10 @@ es el que lo reporta faltante.
 | Variable | Por defecto | Que es |
 | --- | --- | --- |
 | `VERIFIK_TOKEN` | vacio | Token de Verifik para validar la cedula colombiana (ruta 5.3). Sin el, la ruta **esta montada igual** y responde que no esta configurada: un llamador que recibe una ruta desconocida no puede distinguir una configuracion que falta de una URL mal escrita. |
+| `DIDIT_API_KEY` | vacio | Credencial de Didit para crear sesiones biométricas (C8). No está disponible todavía; sin ella no se ejecuta una llamada real. |
+| `DIDIT_WORKFLOW_ID` | vacio | Workflow de Didit usado por las sesiones biométricas (C8). Debe entregarse con la credencial del proveedor. |
+| `DIDIT_WEBHOOK_SECRET` | vacio | Secreto para verificar `X-Signature-V2` en el webhook de Didit (C8). No se registra en Git. |
+| `DIDIT_CALLBACK_URL` | vacio | URL HTTPS pública que Didit usará para el webhook; requiere el túnel del entorno real (C8). |
 
 ## Relacion con `env.example`
 

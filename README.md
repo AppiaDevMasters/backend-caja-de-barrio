@@ -347,6 +347,9 @@ Lo que falta hoy, en orden de dependencia:
 
 1. **C6 y C8** — terminar identidad: `POST /personas` (necesita Verifik), las sesiones de
    Didit y su webhook, con la **deduplicación por `Event.ID` antes de cualquier efecto**.
+   C8 requiere `DIDIT_API_KEY`, `DIDIT_WORKFLOW_ID`, `DIDIT_WEBHOOK_SECRET` y
+   `DIDIT_CALLBACK_URL`; las credenciales todavía no están disponibles, por lo que no se ha
+   ejecutado una llamada real a Didit.
 2. **C10** — `POST /caja/reservas`: la reserva, con el código de cuatro dígitos desde
    `crypto/rand` (un código adivinable le entrega el dinero a quien lo adivine) y el tic
    que libera las vencidas.
