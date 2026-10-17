@@ -51,6 +51,10 @@ const (
 	// does not take that method. The contract fixes no code for it, and it is a
 	// caller bug that a person's assistant still has to explain.
 	CodeMetodoNoPermitido Code = "METODO_NO_PERMITIDO"
+
+	// CodeSinPermiso is the panel's 403: the operator signed in, but her role does
+	// not allow the action. The internal surface never answers it.
+	CodeSinPermiso Code = "SIN_PERMISO"
 )
 
 // unclassifiedMessage is what a person reads when this package could not classify
@@ -102,7 +106,7 @@ func (c Code) known() bool {
 		}
 	}
 
-	return c == CodeInterno || c == CodeMetodoNoPermitido
+	return c == CodeInterno || c == CodeMetodoNoPermitido || c == CodeSinPermiso
 }
 
 // Status maps a code to the HTTP status the contract fixes.
@@ -124,6 +128,8 @@ func (c Code) Status() int {
 		CodeSinFaceMatch, CodeSinRiesgo, CodeSinAprobacion, CodeSinCupo,
 		CodeCupoExcedido, CodeCotizacionVencida:
 		return http.StatusConflict
+	case CodeSinPermiso:
+		return http.StatusForbidden
 	case CodeMetodoNoPermitido:
 		return http.StatusMethodNotAllowed
 	case CodeProveedor:
