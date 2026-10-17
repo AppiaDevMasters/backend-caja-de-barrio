@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/api"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/caja"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/store"
 )
 
@@ -35,6 +36,7 @@ type tiendaBody struct {
 	Estado               string          `json:"estado"`
 	Wallet               string          `json:"wallet"`
 	Reputacion           float64         `json:"reputacion"`
+	TopeRetiroCOP        int64           `json:"tope_retiro_cop"`
 	EfectivoPublicadoCOP int64           `json:"efectivo_publicado_cop"`
 	EfectivoReservadoCOP int64           `json:"efectivo_reservado_cop"`
 	SaldoCOP             int64           `json:"saldo_cop"`
@@ -57,6 +59,7 @@ func cuerpoTienda(t store.TiendaPanel) tiendaBody {
 		Estado:               t.Estado,
 		Wallet:               t.WalletAddress,
 		Reputacion:           t.Reputacion,
+		TopeRetiroCOP:        caja.TopeTienda(t.Nivel),
 		EfectivoPublicadoCOP: t.EfectivoPublicado,
 		EfectivoReservadoCOP: t.EfectivoReservado,
 		SaldoCOP:             t.SaldoCOP,

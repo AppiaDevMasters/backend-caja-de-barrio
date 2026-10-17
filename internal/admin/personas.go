@@ -16,6 +16,15 @@ type diditBody struct {
 	En        *time.Time `json:"en"`
 }
 
+// verifikBody is what the registry said about the document, as far as the record keeps
+// it: an approved registration was confirmed, a manual review carries the reason.
+type verifikBody struct {
+	Valida           *bool   `json:"valida"`
+	NombreCoincide   *bool   `json:"nombre_coincide"`
+	NombreRegistrado *string `json:"nombre_registrado"`
+	Error            *string `json:"error"`
+}
+
 type movimientoBody struct {
 	Tipo  string    `json:"tipo"`
 	Monto int64     `json:"monto"`
@@ -36,16 +45,17 @@ type historialBody struct {
 }
 
 type personaBody struct {
-	ID             string     `json:"id"`
-	Nombre         string     `json:"nombre"`
-	Cedula         string     `json:"cedula"`
-	Whatsapp       string     `json:"whatsapp"`
-	EstadoRegistro string     `json:"estado_registro"`
-	CreadaEn       time.Time  `json:"creada_en"`
-	Wallet         *string    `json:"wallet"`
-	SaldoCOP       int64      `json:"saldo_cop"`
-	MotivoRevision *string    `json:"motivo_revision"`
-	Didit          *diditBody `json:"didit"`
+	ID             string       `json:"id"`
+	Nombre         string       `json:"nombre"`
+	Cedula         string       `json:"cedula"`
+	Whatsapp       string       `json:"whatsapp"`
+	EstadoRegistro string       `json:"estado_registro"`
+	CreadaEn       time.Time    `json:"creada_en"`
+	Wallet         *string      `json:"wallet"`
+	SaldoCOP       int64        `json:"saldo_cop"`
+	MotivoRevision *string      `json:"motivo_revision"`
+	Didit          *diditBody   `json:"didit"`
+	Verifik        *verifikBody `json:"verifik,omitempty"`
 
 	// Only in the detail.
 	PoliticasVersion     *string         `json:"politicas_version,omitempty"`
@@ -141,6 +151,13 @@ func (s *Server) responderFicha(w http.ResponseWriter, r *http.Request, id strin
 
 	body := cuerpoPersona(persona)
 	body.PoliticasVersion, body.PoliticasAceptadasEn = persona.PoliticasVersion, persona.PoliticasEn
+	switch {
+	case persona.EstadoRegistro == "aprobada" && persona.Cedula != "" && persona.MotivoRevision == nil:
+		si, nombre := true, persona.Nombre
+		body.Verifik = &verifikBody{Valida: &si, NombreCoincide: &si, NombreRegistrado: &nombre}
+	case persona.EstadoRegistro == "revision_manual":
+		body.Verifik = &verifikBody{Error: persona.MotivoRevision}
+	}
 
 	billetera, err := s.datos.MovimientosDe(r.Context(), persona.WalletAddress)
 	if err != nil {

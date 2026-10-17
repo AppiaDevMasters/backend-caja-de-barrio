@@ -24,6 +24,8 @@ type datosFalsos struct {
 	auditoria  []store.Auditoria
 	movimiento map[string]int64
 	tiendas    map[string]store.TiendaPanel
+	retiro     store.ReservaRetiro
+	alerta     string
 }
 
 func (d *datosFalsos) UsuarioPanelPorUsername(_ context.Context, u string) (store.UsuarioPanel, bool, error) {
@@ -123,6 +125,42 @@ func (d *datosFalsos) CambiarEstadoTienda(_ context.Context, id string, desde []
 	return false, nil
 }
 
+func (d *datosFalsos) ResumenPanel(context.Context) (store.Resumen, error) {
+	return store.Resumen{RetirosEntregadosHoy: 1, MontoEntregadoHoy: 200_000, PorHora: map[string]int64{"22": 1}}, nil
+}
+func (d *datosFalsos) RetirosPanel(context.Context, string, string) ([]store.RetiroPanel, error) {
+	return []store.RetiroPanel{{ID: d.retiro.ID, Estado: d.retiro.Estado, MontoCOP: d.retiro.MontoCOP}}, nil
+}
+func (d *datosFalsos) ReservaRetiroPorID(_ context.Context, id string) (store.ReservaRetiro, bool, error) {
+	return d.retiro, id == d.retiro.ID, nil
+}
+func (d *datosFalsos) RetiroExtraDe(context.Context, string) (store.RetiroExtra, error) {
+	return store.RetiroExtra{Eventos: []store.EventoRetiro{{Tipo: "reserva", Actor: "agente"}}}, nil
+}
+func (d *datosFalsos) CancelarReserva(context.Context, string, string) error {
+	if d.retiro.Estado != "reservada" {
+		return store.ErrReservaEnOtroEstado{Estado: d.retiro.Estado}
+	}
+	d.retiro.Estado = "cancelada"
+	return nil
+}
+func (d *datosFalsos) SaldosPanel(context.Context) ([]store.BilleteraPanel, error) {
+	return []store.BilleteraPanel{{WalletAddress: "https://op.cajadebarrio.lat/laura", Tipo: "persona", SaldoCOP: 1_000_000}}, nil
+}
+func (d *datosFalsos) AlertasPanel(context.Context, string, string) ([]store.AlertaPanel, error) {
+	return []store.AlertaPanel{{ID: "ale_1", Regla: "pitufeo", Estado: d.alerta}}, nil
+}
+func (d *datosFalsos) ResolverAlerta(context.Context, string, string) (bool, error) {
+	if d.alerta != "abierta" {
+		return false, nil
+	}
+	d.alerta = "resuelta"
+	return true, nil
+}
+func (d *datosFalsos) AuditoriaPanel(context.Context, string, string, string, string) ([]store.EntradaAuditoria, error) {
+	return []store.EntradaAuditoria{{ID: "aud_1", Actor: "cumplimiento", Accion: "aprobar_persona", Detalle: []byte(`{"estado_anterior":"revision_manual"}`)}}, nil
+}
+
 type billeterasFalsas struct{ creadas int }
 
 func (b *billeterasFalsas) CrearBilletera(_ context.Context, id, _ string) (string, error) {
@@ -171,6 +209,10 @@ func nuevoEscenario(t *testing.T) escenario {
 			},
 			movimiento: map[string]int64{},
 			tiendas:    map[string]store.TiendaPanel{},
+			retiro: store.ReservaRetiro{ID: "res_1", Estado: "reservada", MontoCOP: 200_000, ComisionTenderoCOP: 3_600,
+				ComisionPlataformaCOP: 2_000, FaceMatchOK: true, RiesgoOK: true, NombreTienda: "Tienda de Magno",
+				WhatsappCliente: "573506477716", CreadaEn: time.Now()},
+			alerta: "abierta",
 		},
 		billeteras: &billeterasFalsas{},
 		avisos:     &avisosFalsos{listo: make(chan struct{}, 4)},
@@ -370,5 +412,48 @@ func TestRegistrarTenderoYActivarlo(t *testing.T) {
 	}
 	if _, body := e.pedir(t, http.MethodGet, "/admin/tiendas", "", cookie); len(body["tiendas"].([]any)) != 1 {
 		t.Fatalf("list = %v", body)
+	}
+}
+
+func TestLaOperacionDelDiaSinShell(t *testing.T) {
+	e := nuevoEscenario(t)
+	soporte := e.entrar(t, "soporte")
+
+	if _, body := e.pedir(t, http.MethodGet, "/admin/resumen", "", soporte); len(body["kpis"].([]any)) == 0 || len(body["porHora"].([]any)) != 1 {
+		t.Fatalf("resumen = %v", body)
+	}
+	if _, body := e.pedir(t, http.MethodGet, "/admin/retiros", "", soporte); len(body["retiros"].([]any)) != 1 {
+		t.Fatalf("retiros = %v", body)
+	}
+	_, body := e.pedir(t, http.MethodGet, "/admin/retiros/res_1", "", soporte)
+	timeline := body["timeline"].([]any)
+	if len(timeline) != 9 || timeline[0].(map[string]any)["estado"] != "ok" || timeline[6].(map[string]any)["estado"] != "pendiente" {
+		t.Fatalf("the nine-step timeline = %v", timeline)
+	}
+	if _, body := e.pedir(t, http.MethodGet, "/admin/saldos", "", soporte); len(body["billeteras"].([]any)) != 1 {
+		t.Fatalf("saldos = %v", body)
+	}
+
+	res, body := e.pedir(t, http.MethodPost, "/admin/retiros/res_1/cancelar", `{"motivo":"La persona pidió cancelar por teléfono"}`, soporte)
+	if res.StatusCode != http.StatusOK || body["estado"] != "cancelada" {
+		t.Fatalf("cancel = %d %v", res.StatusCode, body)
+	}
+	if res, _ := e.pedir(t, http.MethodPost, "/admin/retiros/res_1/cancelar", `{"motivo":"Otra vez, por error del operador"}`, soporte); res.StatusCode != http.StatusConflict {
+		t.Fatalf("cancelling twice = %d", res.StatusCode)
+	}
+	<-e.avisos.listo
+
+	if res, _ := e.pedir(t, http.MethodGet, "/admin/alertas", "", soporte); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("alerts are for compliance only: %d", res.StatusCode)
+	}
+	cumplimiento := e.entrar(t, "cumplimiento")
+	if _, body := e.pedir(t, http.MethodGet, "/admin/alertas?estado=pendientes", "", cumplimiento); len(body["alertas"].([]any)) != 1 {
+		t.Fatalf("alertas = %v", body)
+	}
+	if _, body := e.pedir(t, http.MethodPost, "/admin/alertas/ale_1/resolver", `{"accion":"descartar","motivo":"Retiros legítimos de la misma persona"}`, cumplimiento); body["estado"] != "resuelta" {
+		t.Fatalf("resolve = %v", body)
+	}
+	if _, body := e.pedir(t, http.MethodGet, "/admin/auditoria", "", cumplimiento); body["auditoria"].([]any)[0].(map[string]any)["antes"] != "revision_manual" {
+		t.Fatalf("auditoria = %v", body)
 	}
 }

@@ -51,6 +51,15 @@ type Datos interface {
 	TiendasPanel(ctx context.Context, estado, texto string) ([]store.TiendaPanel, error)
 	TiendaPanelPorID(ctx context.Context, id string) (store.TiendaPanel, bool, error)
 	CambiarEstadoTienda(ctx context.Context, id string, desde []string, a string) (bool, error)
+	ResumenPanel(ctx context.Context) (store.Resumen, error)
+	RetirosPanel(ctx context.Context, estado, texto string) ([]store.RetiroPanel, error)
+	ReservaRetiroPorID(ctx context.Context, id string) (store.ReservaRetiro, bool, error)
+	RetiroExtraDe(ctx context.Context, reservaID string) (store.RetiroExtra, error)
+	CancelarReserva(ctx context.Context, reservaID, motivo string) error
+	SaldosPanel(ctx context.Context) ([]store.BilleteraPanel, error)
+	AlertasPanel(ctx context.Context, estado, regla string) ([]store.AlertaPanel, error)
+	ResolverAlerta(ctx context.Context, id, resolucion string) (bool, error)
+	AuditoriaPanel(ctx context.Context, actor, accion, entidad, texto string) ([]store.EntradaAuditoria, error)
 }
 
 // Billeteras creates the Open Payments wallet of a person approved by hand.
@@ -104,6 +113,15 @@ func New(cfg Config, datos Datos, billeteras Billeteras, avisos Avisos) (*Server
 	s.mux.HandleFunc("GET /admin/tiendas", s.conSesion(rolSoporte, s.listarTiendas))
 	s.mux.HandleFunc("GET /admin/tiendas/{id}", s.conSesion(rolSoporte, s.fichaTienda))
 	s.mux.HandleFunc("POST /admin/tiendas/{id}/estado", s.conSesion(rolCumplimiento, s.cambiarEstadoTienda))
+
+	s.mux.HandleFunc("GET /admin/resumen", s.conSesion(rolSoporte, s.resumen))
+	s.mux.HandleFunc("GET /admin/retiros", s.conSesion(rolSoporte, s.listarRetiros))
+	s.mux.HandleFunc("GET /admin/retiros/{id}", s.conSesion(rolSoporte, s.fichaRetiro))
+	s.mux.HandleFunc("POST /admin/retiros/{id}/cancelar", s.conSesion(rolSoporte, s.cancelarRetiro))
+	s.mux.HandleFunc("GET /admin/saldos", s.conSesion(rolSoporte, s.saldos))
+	s.mux.HandleFunc("GET /admin/alertas", s.conSesion(rolCumplimiento, s.listarAlertas))
+	s.mux.HandleFunc("POST /admin/alertas/{id}/resolver", s.conSesion(rolCumplimiento, s.resolverAlerta))
+	s.mux.HandleFunc("GET /admin/auditoria", s.conSesion(rolCumplimiento, s.auditoria))
 
 	return s, nil
 }
