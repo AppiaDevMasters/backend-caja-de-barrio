@@ -40,11 +40,6 @@ command -v openssl >/dev/null || {
   exit 1
 }
 
-if [ -f "$env_file" ] && [ "$force" -eq 0 ]; then
-  echo "Ya existe $env_file (usa --force para regenerarlo)."
-  exit 0
-fi
-
 # --- generadores ------------------------------------------------------------
 # base64: apto para secretos HMAC y claves simetricas.
 # hex: apto para incrustar en URLs de conexion (postgresql://user:pass@host).
@@ -58,6 +53,24 @@ uuid4() {
   fi
 }
 
+if [ -f "$env_file" ] && [ "$force" -eq 0 ]; then
+  # Keep an existing stack identity intact. Add only secrets introduced by newer
+  # compose services; never regenerate the tenant, Rafiki secrets, or keys here.
+  if ! grep -q '^CAJA_DB_PASSWORD=' "$env_file"; then
+    printf '\n# --- Base del contrato y superficie interna -------------------------------\nCAJA_DB_PASSWORD=%s\n' "$(hex_32)" >>"$env_file"
+    echo "Agregada CAJA_DB_PASSWORD a $env_file"
+  fi
+  if ! grep -q '^SERVICIO_TOKEN=' "$env_file"; then
+    printf 'SERVICIO_TOKEN=%s\n' "$(b64_32)" >>"$env_file"
+    echo "Agregado SERVICIO_TOKEN a $env_file"
+  fi
+  # Existing files may predate this script and have permissive mode bits. Their
+  # contents now include secrets, so preservation never means preserving unsafe mode.
+  chmod 600 "$env_file"
+  echo "Ya existe $env_file y se conservaron sus secretos (usa --force para regenerarlo)."
+  exit 0
+fi
+
 postgres_password="$(hex_32)"
 admin_api_secret="$(b64_32)"
 signature_secret="$(b64_32)"
@@ -68,7 +81,8 @@ cookie_key="$(hex_32)"
 key_id="$(uuid4)"
 operator_tenant_id="$(uuid4)"
 
-umask 022
+# The generated env file contains database, service, and Rafiki secrets.
+umask 077
 cat >"$env_file" <<EOF
 # Generado por rafiki/scripts/init.sh el $(date -u +%Y-%m-%dT%H:%M:%SZ).
 # NO versionar. Regenerar con: ./scripts/init.sh --force
@@ -91,6 +105,9 @@ OPERATOR_TENANT_ID=$operator_tenant_id
 KEY_ID=$key_id
 
 # --- Secretos --------------------------------------------------------------
+# Base de datos propia del contrato y token de la superficie /internal.
+CAJA_DB_PASSWORD=$(hex_32)
+SERVICIO_TOKEN=$(b64_32)
 ADMIN_API_SECRET=$admin_api_secret
 # Firma los webhooks que Rafiki envia a nuestro backend y las llamadas a la Admin API.
 SIGNATURE_SECRET=$signature_secret
@@ -146,6 +163,7 @@ LOG_LEVEL=debug
 # la UI queda en 401. Solo funciona en origen seguro: tunel SSH al host
 # (http://localhost:3010) o Tailscale Serve con HTTPS. Ver README.
 EOF
+chmod 600 "$env_file"
 
 # --- clave Ed25519 del ASE --------------------------------------------------
 mkdir -p "$keys_dir"

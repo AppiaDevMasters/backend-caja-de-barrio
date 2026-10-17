@@ -179,6 +179,26 @@ services:
       SIGNATURE_SECRET: ${SIGNATURE_SECRET:?}
     networks: [rafiki]
 
+  # Base propia del contrato (separada de las bases de Rafiki). El backend aplica las
+  # migraciones embebidas al arrancar, cuando DATABASE_URL esta configurada.
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: caja-de-barrio-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: caja
+      POSTGRES_PASSWORD: ${CAJA_DB_PASSWORD:?falta CAJA_DB_PASSWORD, ejecuta ./scripts/init.sh}
+      POSTGRES_DB: caja_de_barrio
+    volumes:
+      - caja-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U caja -d caja_de_barrio']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [rafiki]
+
   # Backend de Caja de Barrio: el ASE que Rafiki llama (webhooks, tipos de cambio e
   # IdP) y el cliente Open Payments. Corre DENTRO de la red `rafiki` a proposito:
   # los contenedores no alcanzan los puertos TCP del host (host.docker.internal no
@@ -193,6 +213,8 @@ services:
     restart: unless-stopped
     depends_on:
       rafiki-backend:
+        condition: service_healthy
+      db:
         condition: service_healthy
     ports:
       - '${BACKEND_PORT:-8000}:8000'
@@ -218,6 +240,9 @@ services:
       # interaccion: /grant/{id}/{nonce}. NO es la ruta del navegador
       # (/interact/{id}/{nonce} en el puerto 3006), y llamar a esa daba 404.
       RAFIKI_INTERACTION_SERVER_URL: http://rafiki-auth:3009
+      # La base y el token sólo llegan al backend: los MCP no reciben credenciales de DB.
+      DATABASE_URL: postgres://caja:${CAJA_DB_PASSWORD:?falta CAJA_DB_PASSWORD}@db:5432/caja_de_barrio?sslmode=disable
+      SERVICIO_TOKEN: ${SERVICIO_TOKEN:?falta SERVICIO_TOKEN, ejecuta ./scripts/init.sh}
       # OJO: aca NO se pasa KEY_ID. Ese es el kid de la clave del ASE de Rafiki, que no
       # tiene nada que ver con la clave de NUESTRO cliente. El cliente se nombra con la
       # huella RFC 7638 de su propia clave, que es lo que el seed registra en la wallet
@@ -246,3 +271,4 @@ networks:
 
 volumes:
   postgres-data:
+  caja-db-data:

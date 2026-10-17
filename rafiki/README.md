@@ -7,14 +7,14 @@ autorización GNAP, Admin API, UI de administración y sus bases de datos.
 Se usan **imágenes publicadas y fijadas por versión** (`ghcr.io/interledger/rafiki-*`,
 `v2.4.5-de`). No se compila el monorepo de Rafiki.
 
-> Alcance actual: infraestructura de Rafiki. El backend de Caja de Barrio (rol de ASE:
-> webhooks, tipos de cambio e IdP) todavía no existe; ver [Pendientes](#pendientes).
+> Alcance actual: infraestructura de Rafiki y el backend Go de Caja de Barrio (rol de ASE:
+> webhooks, tipos de cambio e IdP), más la base PostGIS del contrato; ver [Pendientes](#pendientes).
 
 ## Requisitos
 
 - Docker Engine con el plugin Compose v2
 - `openssl` y `bash` (para `scripts/init.sh`)
-- Puertos libres: 3000-3003, 3006, 3007, 3009-3011 y 5432
+- Puertos libres: 3000-3003, 3006, 3007, 3009-3011 y 8000 (PostGIS del contrato no se publica)
 
 ## Puesta en marcha
 
@@ -64,11 +64,13 @@ docker compose down --volumes              # borra Postgres
 | `rafiki-auth`  | `http://localhost:3011`          | API servicio a servicio                       |
 | `rafiki-admin` | `http://localhost:3010`          | UI de administración de Rafiki                |
 | `postgres`     | `localhost:5432`                 | Bases `rafiki_backend` y `rafiki_auth`        |
+| `db`           | interno                          | PostGIS del contrato; `caja_de_barrio`       |
 | `redis`        | interno                          | Cache y datos de ILP                          |
-| `backend`      | `http://localhost:8000`          | Backend de Caja de Barrio: webhooks, tipos de cambio e IdP |
+| `backend`      | `http://localhost:8000`          | Backend Go: webhooks, tasas, IdP y `/internal` |
 
-Las bases de datos se separan en `config/dbinit.sql`, que Postgres ejecuta una sola
-vez al inicializar su volumen.
+Las bases de Rafiki se separan en `config/dbinit.sql`, que Postgres ejecuta una sola vez al
+inicializar su volumen. La base `db` es independiente: el backend aplica sus migraciones
+embebidas al arrancar, después de que el healthcheck de PostGIS pasa.
 
 ## Contabilidad: Postgres o TigerBeetle
 
@@ -128,6 +130,9 @@ verificada contra los `os.Getenv` del código, y los nombres con valores de ejem
 | `RAFIKI_SIGNATURE_SECRET` | `.env` (`SIGNATURE_SECRET`) | Verifica la firma de los webhooks. |
 | `RAFIKI_IDENTITY_SERVER_SECRET` | `.env` (`IDENTITY_SERVER_SECRET`) | Secreto compartido con el IdP. |
 | `OP_PRIVATE_KEY_PATH` | compose | Clave privada del cliente Open Payments de este backend, montada desde `../keys`. **`OP_KEY_ID` no se pasa a proposito**: vacio, el cliente se nombra con la huella RFC 7638 de su propia clave, que es lo que el seed registra. El `KEY_ID` de `.env` es la clave del ASE **de Rafiki** y no la nuestra, y al pasarlo el servidor de autorizacion contestaba `400 could not determine client`. |
+| `DATABASE_URL` | compose | DSN interno de la base PostGIS del contrato; sólo se inyecta al backend Go, que migra al arrancar. Rafiki usa su propia `DATABASE_URL` para sus bases. |
+| `SERVICIO_TOKEN` | `.env` | Token de `X-Servicio-Token` para la superficie `/internal`; sólo se inyecta al backend. |
+| `CAJA_DB_PASSWORD` | `.env` | Contraseña de `db`, generada en hexadecimal para que sea segura dentro del DSN PostgreSQL. Si se sobrescribe manualmente, debe conservar ese formato hex-safe. |
 
 Fuera de Docker, `cmd/backend` y `cmd/seed` leen las mismas variables del entorno del
 proceso: exportalas desde `.env` mapeando los cuatro nombres que difieren.
@@ -186,8 +191,9 @@ docker exec rafiki-postgres psql -U rafiki -d rafiki_auth \
 ## Variables de `.env`
 
 `scripts/init.sh` genera `rafiki/.env` con secretos aleatorios. No se versiona
-(está en `.gitignore`). La plantilla `.env.example` no se incluye porque el harness
-de Pi bloquea escribir archivos `.env.*`; esta tabla es la referencia.
+(está en `.gitignore`). La plantilla versionada [`../env.example`](../env.example)
+contiene los nombres y valores de ejemplo del backend Go; esta tabla documenta además
+las variables privadas que genera el script para el stack de Rafiki.
 
 | Variable                          | Descripción                                                          |
 | --------------------------------- | -------------------------------------------------------------------- |
@@ -212,6 +218,8 @@ de Pi bloquea escribir archivos `.env.*`; esta tabla es la referencia.
 | `EXCHANGE_RATES_URL`              | Endpoint de tipos de cambio de nuestro backend                       |
 | `*_PORT`                          | Puertos publicados en el host                                         |
 | `LOG_LEVEL`                       | Nivel de log (Pino)                                                   |
+| `CAJA_DB_PASSWORD`                | Contraseña hex-safe de la base PostGIS del contrato                     |
+| `SERVICIO_TOKEN`                   | Token de `X-Servicio-Token` para `/internal`                            |
 
 Los contenedores alcanzan `localhost` del host como `host.docker.internal`, mapeado
 en `rafiki-backend` con `extra_hosts`. Por eso `WEBHOOK_URL` y `EXCHANGE_RATES_URL`
@@ -219,8 +227,9 @@ apuntan al backend de Caja de Barrio en el puerto 8000.
 
 ## Pendientes
 
-Lo que falta para que un pago funcione de punta a punta. Todos son trabajo de nuestro
-backend (el ASE), no de Rafiki:
+Lo que falta del producto alrededor del stack de Rafiki. El camino T12 del cliente Open
+Payments ya mueve dinero contra el stack local; las rutas del contrato que lo dispararán
+desde un agente todavía están en construcción:
 
 1. **Wallet addresses y cuentas**: ya están creadas (asset COP, tres wallet addresses y
    la clave pública registrada con `createWalletAddressKey`). Falta que sean alcanzables:

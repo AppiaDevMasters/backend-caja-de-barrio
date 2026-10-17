@@ -57,15 +57,10 @@ es el que lo reporta faltante.
 | --- | --- | --- |
 | `VERIFIK_TOKEN` | vacio | Token de Verifik para validar la cedula colombiana (ruta 5.3). Sin el, la ruta **esta montada igual** y responde que no esta configurada: un llamador que recibe una ruta desconocida no puede distinguir una configuracion que falta de una URL mal escrita. |
 
-## Por que no hay `.env.example`
+## Relacion con `env.example`
 
-El contexto del proyecto pide un `.env.example` con los nombres de las variables y
-nada mas. El harness de Pi bloquea escribir rutas `.env.*`, por politica de
-seguridad, asi que esta tabla es la fuente de los nombres. Para crear el archivo
-literal, con los nombres y sin valores:
-
-```bash
-# Solo los nombres de la primera columna de las tablas, que son los que lee el
-# backend. Las demas nombres que aparecen en el texto son los de rafiki/.env.
-grep -oE '^\| `[A-Z_]+`' docs/configuracion.md | grep -oE '[A-Z_]+' | sort -u | sed 's/$/=/' > .env.example
-```
+`env.example` existe y está versionado en la raíz. Contiene los nombres y valores de ejemplo
+de las variables del backend Go, sin secretos reales. Esta referencia explica el consumidor y
+la semántica de cada variable; las variables privadas que genera `rafiki/scripts/init.sh` para
+el stack (incluidas `CAJA_DB_PASSWORD` y `SERVICIO_TOKEN`) están documentadas en
+[`rafiki/README.md`](../rafiki/README.md) y viven en `rafiki/.env`, que no se versiona.

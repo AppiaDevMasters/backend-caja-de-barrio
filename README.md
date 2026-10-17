@@ -15,9 +15,9 @@ Hoy este repositorio es el **backend en Go** de Caja de Barrio, y tiene **tres p
 Al lado vive el stack local de Rafiki (servidor de recursos, servidor de autorización
 GNAP, Admin API, UI y sus bases de datos), en [`rafiki/`](rafiki/README.md).
 
-**Nada de esto mueve dinero todavía de punta a punta**: el cliente está escrito y probado
-pero **nunca se ejecutó contra Rafiki**, y las rutas que lo disparan (`/internal/pagos`)
-todavía no existen. El detalle está en
+**El camino de dinero de T12 sí mueve fondos de punta a punta contra Rafiki**: el cliente está
+escrito, probado y ejecutado en vivo desde el contenedor. Las rutas que lo disparan desde el
+agente (`/internal/pagos`) todavía no existen; el detalle está en
 [Cómo hacer un intercambio](#cómo-hacer-un-intercambio).
 
 ## Estado de hoy
@@ -39,7 +39,7 @@ todavía no existen. El detalle está en
 | `internal/identidad` — quién escribe y aceptación de políticas | Rutas y consultas listas, probadas; **no montadas en el stack** |
 | `internal/api` — la superficie `/internal`, el token y el sobre de errores | Listo (lo construyó la otra sesión del mismo árbol) |
 | Rutas de pagos `/internal/pagos/*` y `POST /caja/reservas` | **No existen todavía** |
-| Servicio `db` con PostGIS en el compose | **No existe todavía** |
+| Servicio `db` con PostGIS en el compose | **Listo**, con migraciones al arrancar y variables privadas del backend |
 | Retiro de punta a punta contra Rafiki | **Verificado en vivo**: los dos pagos se liquidan y la tienda recibe el efectivo |
 
 ## Arquitectura
@@ -61,7 +61,8 @@ todavía no existen. El detalle está en
   +--------------------------------------------------------+
 
   (los cuatro MCP del agente llaman a /internal desde la misma red;
-   la base con PostGIS del contrato es un servicio que todavía no está en el compose)
+   la DATABASE_URL de la base del contrato y SERVICIO_TOKEN sólo llegan al backend Go;
+   Rafiki conserva su propia DATABASE_URL para sus bases)
 ```
 
 Tres decisiones de topología que explican el dibujo, y que están verificadas en este host
@@ -129,8 +130,8 @@ docker compose ps
 
 `--build` compila la imagen `caja-de-barrio-backend:local` con el
 [`Dockerfile`](Dockerfile) de la raíz y la corre dentro de la red `rafiki`. Deben quedar
-seis servicios: `rafiki-backend`, `rafiki-auth`, `rafiki-postgres`, `rafiki-redis`,
-`rafiki-admin` y `backend`.
+siete servicios: `rafiki-backend`, `rafiki-auth`, `rafiki-postgres`, `rafiki-redis`,
+`rafiki-admin`, `db` y `backend`.
 
 ### 4. Aprovisionar el ASE (seed)
 
@@ -209,11 +210,14 @@ Los dos nombres del documento resuelven **dentro de la red**, que es lo que habi
 flujo de grant sin reescribir hosts. Una URL `https://<host>:3000/...` desde fuera de
 Docker no responde todavía: no hay TLS en el puerto 3000.
 
-La **superficie interna** no responde hoy en el stack porque el contenedor no recibe
-`SERVICIO_TOKEN` ni `DATABASE_URL`. Cuando el compose los inyecte (tarea C16):
+La **superficie interna** se monta en el stack cuando la `DATABASE_URL` de la base del contrato y
+`SERVICIO_TOKEN` llegan al backend (el compose local ya los inyecta y `cmd/backend` aplica las
+migraciones al arrancar).
+Sin el token, la ruta sigue protegida:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8000/internal/mapa/tiendas/cercanas   # 401: sin token
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  http://localhost:8000/internal/mapa/tiendas/cercanas   # 401: sin token
 ```
 
 ### Apagar
@@ -280,8 +284,8 @@ visible con pruebas contra dobles. Los tres primeros son los que más vale la pe
 | `i/o timeout` al rotar el token | La URL de gestión que devuelve **cada rotación** vuelve a traer el host público: reescribirlo una vez no alcanza |
 
 Y lo que **todavía no** se puede: que el **agente** pida un retiro. Para eso faltan las rutas
-`/internal/pagos/*` (C13 y C14), el servicio `db` con PostGIS en el compose (C16) y
-`POST /caja/reservas` (C10).
+`/internal/pagos/*` (C13 y C14) y `POST /caja/reservas` (C10). El servicio `db` con PostGIS
+ya está en el compose y monta la superficie `/internal` al arrancar el backend.
 
 ### Cómo será un intercambio pedido por el agente
 
@@ -347,10 +351,9 @@ Lo que falta hoy, en orden de dependencia:
    `crypto/rand` (un código adivinable le entrega el dinero a quien lo adivine) y el tic
    que libera las vencidas.
 3. **C13 y C14** — las rutas de pagos, que envuelven a `internal/opclient`.
-4. **C16** — el servicio `db` con PostGIS y las variables por servicio en el compose.
-5. **C19** — el retiro de punta a punta contra Rafiki, con la lista de comprobación del
-   contrato.
-6. **C5** — los datos de la demo (cinco tiendas de Aranjuez). Está **detenido**: el
+4. **C19** — el retiro de punta a punta del contrato, con la lista de comprobación de
+   la sección 11.
+5. **C5** — los datos de la demo (cinco tiendas de Aranjuez). Está **detenido**: el
    contrato delega las coordenadas reales de las tiendas en
    `agente-caja-de-barrio/agente/herramientas/simuladas.py`, que no está en esta máquina.
 
