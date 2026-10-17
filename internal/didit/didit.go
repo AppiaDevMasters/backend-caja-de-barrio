@@ -109,6 +109,23 @@ type Decision struct {
 
 	// Pending is true while the person has not finished.
 	Pending bool
+
+	// Document is what the ID verification feature read from the person's document,
+	// when the workflow ran one (the registration workflow does; the biometric one
+	// does not). It is what the registration hands to the civil registry.
+	Document Document
+}
+
+// Document is the identity document as the provider read it.
+type Document struct {
+	// Type is what the provider reported, for example "Identity Card".
+	Type string
+
+	// Number is the document number, digits only when the document has them.
+	Number string
+
+	// FullName is the name printed on the document, as the provider read it.
+	FullName string
 }
 
 // Client is a Didit client. It is safe for concurrent use.
@@ -158,8 +175,19 @@ func New(apiKey, workflowID, webhookSecret string) (*Client, error) {
 // own default, so passing an empty value silently sends the person somewhere this
 // backend does not control. Pass the configured value.
 func (c *Client) CreateSession(ctx context.Context, vendorData, callbackURL string) (Session, error) {
+	return c.CreateSessionWith(ctx, c.workflowID, vendorData, callbackURL)
+}
+
+// CreateSessionWith is CreateSession with an explicit workflow. The contract uses two:
+// the registration one (document + liveness) and the biometric one for every
+// withdrawal (liveness + face match against the registered face).
+func (c *Client) CreateSessionWith(ctx context.Context, workflowID, vendorData, callbackURL string) (Session, error) {
+	workflowID = strings.TrimSpace(workflowID)
+	if workflowID == "" {
+		workflowID = c.workflowID
+	}
 	payload := map[string]string{
-		"workflow_id": c.workflowID,
+		"workflow_id": workflowID,
 		"vendor_data": vendorData,
 	}
 	if callbackURL != "" {
@@ -243,6 +271,10 @@ func (c *Client) Decision(ctx context.Context, sessionID string) (Decision, erro
 		Status         string          `json:"status"`
 		FaceMatches    []featureReport `json:"face_matches"`
 		LivenessChecks []featureReport `json:"liveness_checks"`
+		// The v3 decision reports the ID verification as an array, like every other
+		// feature; the older shape was a single object. Both are read.
+		IDVerifications []idVerification `json:"id_verifications"`
+		IDVerification  *idVerification  `json:"id_verification"`
 	}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return Decision{}, fmt.Errorf("didit: decoding the provider reply: %w", err)
@@ -262,7 +294,54 @@ func (c *Client) Decision(ctx context.Context, sessionID string) (Decision, erro
 	}
 	decision.Score = firstScore(decoded.FaceMatches, decoded.LivenessChecks)
 
+	reads := decoded.IDVerifications
+	if decoded.IDVerification != nil {
+		reads = append(reads, *decoded.IDVerification)
+	}
+	for _, read := range reads {
+		if document := read.document(); document.Number != "" {
+			decision.Document = document
+			break
+		}
+	}
+
 	return decision, nil
+}
+
+// idVerification is the ID verification block of a decision: only the fields the
+// registration needs. Nothing else of the document (photos, address, dates) is kept.
+type idVerification struct {
+	DocumentType   string `json:"document_type"`
+	DocumentNumber string `json:"document_number"`
+	PersonalNumber string `json:"personal_number"`
+	FirstName      string `json:"first_name"`
+	LastName       string `json:"last_name"`
+	FullName       string `json:"full_name"`
+}
+
+// document normalizes one read. A Colombian cédula is printed with dots, and the
+// registry wants digits only.
+func (v idVerification) document() Document {
+	number := strings.TrimSpace(v.DocumentNumber)
+	if number == "" {
+		number = strings.TrimSpace(v.PersonalNumber)
+	}
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, number)
+	if digits != "" {
+		number = digits
+	}
+
+	name := strings.TrimSpace(v.FullName)
+	if name == "" {
+		name = strings.TrimSpace(strings.TrimSpace(v.FirstName) + " " + strings.TrimSpace(v.LastName))
+	}
+
+	return Document{Type: strings.TrimSpace(v.DocumentType), Number: number, FullName: name}
 }
 
 // featureReport is one entry of a feature block of the decision. Each block is an
