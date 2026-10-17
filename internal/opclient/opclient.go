@@ -48,6 +48,11 @@ type Config struct {
 	// have to be rewritten BEFORE they are signed: the signature covers the target URI, so
 	// rewriting them on the way out would produce a signature that cannot verify.
 	HostRewrites map[string]string
+
+	// TLS says the ASE really serves its wallet addresses over https, as it does behind
+	// the VPS's Caddy. Then nothing is downgraded to http: downgrading there makes the
+	// proxy redirect back to https, forever.
+	TLS bool
 }
 
 // WalletAddress is the document the ASE publishes for one wallet address, reduced
@@ -98,6 +103,11 @@ func New(cfg Config) (*Client, error) {
 	httpClient := &http.Client{
 		Transport: downgradeTransport{host: parsed.Host, next: http.DefaultTransport},
 	}
+	identidad := httpForm(addressURL)
+	if cfg.TLS {
+		httpClient = &http.Client{Transport: http.DefaultTransport}
+		identidad = addressURL
+	}
 
 	// The client identifies itself, and SIGNS, with the URL the ASE actually serves. The
 	// signature covers the target URI, so the scheme is part of what is signed: signing the
@@ -105,7 +115,7 @@ func New(cfg Config) (*Client, error) {
 	// verify, because it rebuilds the target URI from the request it receives. The first
 	// live withdrawal found exactly that (401 "provided signature is invalid"), and the
 	// transport below applies the same rule to the calls.
-	sdk, err := openpayments.NewAuthenticatedClient(httpForm(addressURL), cfg.PrivateKeyPath, kid, openpayments.WithHTTPClientAuthed(httpClient))
+	sdk, err := openpayments.NewAuthenticatedClient(identidad, cfg.PrivateKeyPath, kid, openpayments.WithHTTPClientAuthed(httpClient))
 	if err != nil {
 		return nil, fmt.Errorf("opclient: building the authenticated client: %w", err)
 	}

@@ -110,6 +110,7 @@ func run() error {
 				PrivateKeyPath:   cfg.OP.PrivateKeyPath,
 				KeyID:            cfg.OP.KeyID,
 				HostRewrites:     cfg.HostRewrites(),
+				TLS:              cfg.OP.TLS,
 			})
 			if err != nil {
 				return err

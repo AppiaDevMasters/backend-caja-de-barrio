@@ -55,6 +55,10 @@ type OP struct {
 	// thumbprint.
 	KeyID          string
 	PrivateKeyPath string
+
+	// TLS is OP_TLS: the wallet addresses and the authorization server are reached by
+	// their public https URLs, as on the VPS. Off, the local stack's http rules apply.
+	TLS bool
 }
 
 // Database holds the data layer settings: where the schema of the contract lives.
@@ -216,6 +220,7 @@ func Load() (Config, error) {
 			ClientWalletAddress: clientWallet,
 			KeyID:               strings.TrimSpace(os.Getenv("OP_KEY_ID")),
 			PrivateKeyPath:      defaultString(os.Getenv("OP_PRIVATE_KEY_PATH"), DefaultOPPrivateKeyPath),
+			TLS:                 strings.EqualFold(strings.TrimSpace(os.Getenv("OP_TLS")), "true"),
 		},
 		Database: Database{
 			URL: strings.TrimSpace(os.Getenv("DATABASE_URL")),
@@ -250,6 +255,10 @@ func Load() (Config, error) {
 // the network: its continuation and token management URLs come back with the host the stack
 // publishes for a browser, and a container cannot reach the host's published ports.
 func (c Config) HostRewrites() map[string]string {
+	// With real TLS every public URL is reachable as it is: nothing to rewrite.
+	if c.OP.TLS {
+		return nil
+	}
 	publica, err := url.Parse(c.Rafiki.AuthServerPublicURL)
 	if err != nil || publica.Host == "" {
 		return nil
