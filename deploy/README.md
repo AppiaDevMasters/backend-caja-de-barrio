@@ -78,6 +78,23 @@ red de Docker esos mismos nombres apuntan a Caddy (por alias de red).
    curl -H 'Accept: application/json' https://op.<ip-con-guiones>.sslip.io/laura-cajadebarrio
    ```
 
+## Llaves de proveedores (Verifik, Didit)
+
+Van en `deploy/llaves.env` **en el VPS**. No se versiona y queda con permisos 600. El instalador lo crea vacío
+desde [`llaves.env.example`](llaves.env.example), donde está cada variable y de dónde sacarla.
+
+```bash
+ssh root@<ip>
+cd /opt/backend-caja-de-barrio
+nano deploy/llaves.env        # llenar VERIFIK_TOKEN, DIDIT_API_KEY, DIDIT_WORKFLOW_ID, DIDIT_WEBHOOK_SECRET
+sudo ./deploy/instalar.sh     # aplica las llaves y dice cuáles faltan
+```
+
+En la consola de Didit, el webhook va a `https://agente.cajadebarrio.lat/webhook/didit`.
+
+Las llaves del agente (Gemini y WhatsApp) van aparte, en `/opt/agente-caja-de-barrio/.env`. Después de cambiarlas
+se corre `sudo ./deploy/instalar.sh` en ese repo.
+
 ## Operación
 
 | Tarea | Comando (en el VPS, desde la raíz del repo) |
@@ -106,7 +123,7 @@ apuntando a la IP del VPS.
 - **No cambies `DOMINIO` después del primer arranque.** Rafiki guarda el `authServer` en el tenant y las
   wallet addresses con su URL completa. El script reutiliza el dominio guardado y se niega a cambiarlo; para
   cambiarlo, ver "Cambiar de dominio".
-- **Secretos:** `rafiki/.env`, `rafiki/config/keys/`, `keys/` y `deploy/.credenciales-admin` viven solo en el
+- **Secretos:** `rafiki/.env`, `rafiki/config/keys/`, `keys/`, `deploy/llaves.env` y `deploy/.credenciales-admin` viven solo en el
   VPS (están en `.gitignore`). Haz copia de `rafiki/.env` y de las claves si el servidor va a durar.
 - **Let's Encrypt:** el dominio de `sslip.io` debe resolver a la IP del VPS y los puertos 80 y 443 tienen que
   estar abiertos en el firewall del proveedor. Si Caddy no obtiene el certificado, revisa `docker logs caja-de-barrio-caddy`.
