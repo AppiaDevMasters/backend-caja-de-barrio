@@ -46,6 +46,11 @@ type Datos interface {
 	AsignarWallet(ctx context.Context, personaID, wallet string) error
 	MovimientosDe(ctx context.Context, wallet string) (store.Billetera, error)
 	RegistrarMovimiento(ctx context.Context, id, wallet, tipo string, monto int64, referencia string) error
+	PersonaPorWhatsapp(ctx context.Context, whatsapp string) (store.Persona, bool, error)
+	CrearTiendaPendiente(ctx context.Context, tienda store.TiendaNueva) error
+	TiendasPanel(ctx context.Context, estado, texto string) ([]store.TiendaPanel, error)
+	TiendaPanelPorID(ctx context.Context, id string) (store.TiendaPanel, bool, error)
+	CambiarEstadoTienda(ctx context.Context, id string, desde []string, a string) (bool, error)
 }
 
 // Billeteras creates the Open Payments wallet of a person approved by hand.
@@ -94,6 +99,11 @@ func New(cfg Config, datos Datos, billeteras Billeteras, avisos Avisos) (*Server
 	s.mux.HandleFunc("GET /admin/personas/{id}", s.conSesion(rolSoporte, s.fichaPersona))
 	s.mux.HandleFunc("POST /admin/personas/{id}/aprobar", s.conSesion(rolCumplimiento, s.aprobarPersona))
 	s.mux.HandleFunc("POST /admin/personas/{id}/rechazar", s.conSesion(rolCumplimiento, s.rechazarPersona))
+
+	s.mux.HandleFunc("POST /admin/tenderos", s.conSesion(rolCumplimiento, s.registrarTendero))
+	s.mux.HandleFunc("GET /admin/tiendas", s.conSesion(rolSoporte, s.listarTiendas))
+	s.mux.HandleFunc("GET /admin/tiendas/{id}", s.conSesion(rolSoporte, s.fichaTienda))
+	s.mux.HandleFunc("POST /admin/tiendas/{id}/estado", s.conSesion(rolCumplimiento, s.cambiarEstadoTienda))
 
 	return s, nil
 }

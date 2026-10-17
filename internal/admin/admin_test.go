@@ -23,6 +23,7 @@ type datosFalsos struct {
 	whatsapps  map[string]string
 	auditoria  []store.Auditoria
 	movimiento map[string]int64
+	tiendas    map[string]store.TiendaPanel
 }
 
 func (d *datosFalsos) UsuarioPanelPorUsername(_ context.Context, u string) (store.UsuarioPanel, bool, error) {
@@ -80,6 +81,48 @@ func (d *datosFalsos) RegistrarMovimiento(_ context.Context, _, wallet, tipo str
 	return nil
 }
 
+func (d *datosFalsos) PersonaPorWhatsapp(_ context.Context, whatsapp string) (store.Persona, bool, error) {
+	for _, p := range d.personas {
+		if p.Whatsapp == whatsapp {
+			return store.Persona{ID: p.ID, Whatsapp: whatsapp}, true, nil
+		}
+	}
+	return store.Persona{}, false, nil
+}
+func (d *datosFalsos) CrearTiendaPendiente(_ context.Context, t store.TiendaNueva) error {
+	for _, existente := range d.tiendas {
+		if existente.WhatsappTendero == t.Whatsapp {
+			return store.ErrTenderoExistente
+		}
+	}
+	d.tiendas[t.ID] = store.TiendaPanel{ID: t.ID, Nombre: t.Nombre, Direccion: t.Direccion, Lat: t.Lat, Lon: t.Lon,
+		Nivel: t.Nivel, Estado: "pendiente_verificacion", WalletAddress: t.WalletAddress, WhatsappTendero: t.Whatsapp,
+		NombreTendero: t.NombreTendero, CreadaEn: time.Now()}
+	return nil
+}
+func (d *datosFalsos) TiendasPanel(context.Context, string, string) ([]store.TiendaPanel, error) {
+	lista := []store.TiendaPanel{}
+	for _, t := range d.tiendas {
+		lista = append(lista, t)
+	}
+	return lista, nil
+}
+func (d *datosFalsos) TiendaPanelPorID(_ context.Context, id string) (store.TiendaPanel, bool, error) {
+	t, ok := d.tiendas[id]
+	return t, ok, nil
+}
+func (d *datosFalsos) CambiarEstadoTienda(_ context.Context, id string, desde []string, a string) (bool, error) {
+	t := d.tiendas[id]
+	for _, estado := range desde {
+		if t.Estado == estado {
+			t.Estado = a
+			d.tiendas[id] = t
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 type billeterasFalsas struct{ creadas int }
 
 func (b *billeterasFalsas) CrearBilletera(_ context.Context, id, _ string) (string, error) {
@@ -127,6 +170,7 @@ func nuevoEscenario(t *testing.T) escenario {
 					WalletAddress: "https://op.cajadebarrio.lat/laura", CreadaEn: time.Now()},
 			},
 			movimiento: map[string]int64{},
+			tiendas:    map[string]store.TiendaPanel{},
 		},
 		billeteras: &billeterasFalsas{},
 		avisos:     &avisosFalsos{listo: make(chan struct{}, 4)},
@@ -289,5 +333,42 @@ func TestRechazarSoloLoQueNoEstaDecidido(t *testing.T) {
 	}
 	if res, _ := e.pedir(t, http.MethodGet, "/admin/personas/no-existe", "", cookie); res.StatusCode != http.StatusNotFound {
 		t.Fatalf("an unknown person = %d", res.StatusCode)
+	}
+}
+
+func TestRegistrarTenderoYActivarlo(t *testing.T) {
+	e := nuevoEscenario(t)
+	cookie := e.entrar(t, "cumplimiento")
+	tendero := `{"nombre_tienda":"Tienda La Prueba","direccion":"Cra 50 #92-10","lat":6.2761,"lon":-75.558,` +
+		`"nivel":"comercio","whatsapp_tendero":"+57 300 111 2233","nombre_tendero":"Pedro Tendero",` +
+		`"motivo":"Alta de tienda para la prueba de punta a punta"}`
+
+	res, body := e.pedir(t, http.MethodPost, "/admin/tenderos", tendero, cookie)
+	if res.StatusCode != http.StatusCreated || body["estado"] != "pendiente_verificacion" || body["wallet"] == "" {
+		t.Fatalf("register = %d %v", res.StatusCode, body)
+	}
+	id := body["id"].(string)
+	if e.billeteras.creadas != 1 || e.datos.auditoria[0].Accion != "registrar_tendero" {
+		t.Fatalf("wallets %d, audit %+v", e.billeteras.creadas, e.datos.auditoria)
+	}
+	<-e.avisos.listo
+	if !strings.HasPrefix(e.avisos.enviados[0], "573001112233: ") {
+		t.Fatalf("the storekeeper must be told on his normalized number: %q", e.avisos.enviados[0])
+	}
+
+	if res, _ := e.pedir(t, http.MethodPost, "/admin/tenderos", tendero, cookie); res.StatusCode != http.StatusConflict {
+		t.Fatalf("the same storekeeper twice = %d", res.StatusCode)
+	}
+	cliente := strings.Replace(tendero, "+57 300 111 2233", "573009990002", 1)
+	if res, _ := e.pedir(t, http.MethodPost, "/admin/tenderos", cliente, cookie); res.StatusCode != http.StatusConflict {
+		t.Fatalf("a client's number as storekeeper = %d", res.StatusCode)
+	}
+
+	res, body = e.pedir(t, http.MethodPost, "/admin/tiendas/"+id+"/estado", `{"estado":"activa","motivo":"Revisión manual del tendero"}`, cookie)
+	if res.StatusCode != http.StatusOK || body["estado"] != "activa" {
+		t.Fatalf("activate = %d %v", res.StatusCode, body)
+	}
+	if _, body := e.pedir(t, http.MethodGet, "/admin/tiendas", "", cookie); len(body["tiendas"].([]any)) != 1 {
+		t.Fatalf("list = %v", body)
 	}
 }
