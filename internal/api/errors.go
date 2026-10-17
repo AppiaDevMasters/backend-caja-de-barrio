@@ -55,6 +55,9 @@ const (
 	// CodeSinPermiso is the panel's 403: the operator signed in, but her role does
 	// not allow the action. The internal surface never answers it.
 	CodeSinPermiso Code = "SIN_PERMISO"
+
+	// CodeSaldoInsuficiente is a payment whose virtual wallet cannot cover it.
+	CodeSaldoInsuficiente Code = "SALDO_INSUFICIENTE"
 )
 
 // unclassifiedMessage is what a person reads when this package could not classify
@@ -106,7 +109,7 @@ func (c Code) known() bool {
 		}
 	}
 
-	return c == CodeInterno || c == CodeMetodoNoPermitido || c == CodeSinPermiso
+	return c == CodeInterno || c == CodeMetodoNoPermitido || c == CodeSinPermiso || c == CodeSaldoInsuficiente
 }
 
 // Status maps a code to the HTTP status the contract fixes.
@@ -130,6 +133,8 @@ func (c Code) Status() int {
 		return http.StatusConflict
 	case CodeSinPermiso:
 		return http.StatusForbidden
+	case CodeSaldoInsuficiente:
+		return http.StatusConflict
 	case CodeMetodoNoPermitido:
 		return http.StatusMethodNotAllowed
 	case CodeProveedor:
