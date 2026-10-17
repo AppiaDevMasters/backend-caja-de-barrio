@@ -97,6 +97,13 @@ fi
 chmod 600 deploy/llaves.env
 # Si se editó desde Windows trae fines de línea CRLF: el \r se pegaría a cada valor.
 sed -i 's/\r$//' deploy/llaves.env
+# Claves del panel: las que falten se generan una vez y quedan en llaves.env (nunca se imprimen).
+for llave in PANEL_CLAVE_SUPERADMIN PANEL_CLAVE_CUMPLIMIENTO PANEL_CLAVE_SOPORTE; do
+  if ! grep -q "^$llave=[^[:space:]]" deploy/llaves.env; then
+    sed -i "/^$llave=/d" deploy/llaves.env
+    printf '%s=%s\n' "$llave" "$(openssl rand -hex 12)" >>deploy/llaves.env
+  fi
+done
 for llave in DIDIT_API_KEY DIDIT_WORKFLOW_ID DIDIT_BIOMETRIC_WORKFLOW_ID VERIFIK_API_KEY; do
   grep -q "^$llave=[^[:space:]]" deploy/llaves.env && echo "  $llave: puesta" || echo "  $llave: FALTA"
 done

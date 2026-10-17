@@ -104,6 +104,7 @@ se corre `sudo ./deploy/instalar.sh` en ese repo.
 | Ver logs | `docker logs -f caja-de-barrio-backend` · `docker logs -f rafiki-backend` · `docker logs -f caja-de-barrio-caddy` |
 | Reiniciar todo | `docker compose -f rafiki/docker-compose.yml -f deploy/compose.vps.yml restart` |
 | Clave de la UI de Rafiki | `cat deploy/.credenciales-admin` |
+| Claves del panel (`super`, `cumplimiento`, `soporte`) | `grep PANEL_CLAVE deploy/llaves.env` |
 
 ## Cambiar de dominio
 
