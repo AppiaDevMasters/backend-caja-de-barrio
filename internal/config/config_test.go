@@ -119,12 +119,16 @@ func TestLoadReadsTheOpenPaymentsClientSettings(t *testing.T) {
 	t.Setenv("OP_CLIENT_WALLET_ADDRESS", "https://ase.example:3000/laura-cajadebarrio")
 	t.Setenv("OP_KEY_ID", "mi-llave")
 	t.Setenv("OP_PRIVATE_KEY_PATH", "/ruta/clave.pem")
+	t.Setenv("OP_FINISH_URL", "https://agente.example/op/finish")
+	t.Setenv("OP_WALLET_PLATAFORMA", "https://ase.example:3000/app-cajadebarrio-cop")
+	t.Setenv("OP_TLS", "true")
 
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("Load() returned an error: %v", err)
 	}
-	want := config.OP{ClientWalletAddress: "https://ase.example:3000/laura-cajadebarrio", KeyID: "mi-llave", PrivateKeyPath: "/ruta/clave.pem"}
+	want := config.OP{ClientWalletAddress: "https://ase.example:3000/laura-cajadebarrio", KeyID: "mi-llave", PrivateKeyPath: "/ruta/clave.pem",
+		FinishURL: "https://agente.example/op/finish", WalletPlataforma: "https://ase.example:3000/app-cajadebarrio-cop", TLS: true}
 	if cfg.OP != want {
 		t.Errorf("OP = %+v, want %+v", cfg.OP, want)
 	}

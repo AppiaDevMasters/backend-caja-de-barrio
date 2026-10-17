@@ -56,6 +56,14 @@ type OP struct {
 	KeyID          string
 	PrivateKeyPath string
 
+	// FinishURL is OP_FINISH_URL: where the wallet sends the person back after she
+	// approves her cupo (the agent's /op/finish).
+	FinishURL string
+
+	// WalletPlataforma is OP_WALLET_PLATAFORMA: the COP wallet that collects Caja de
+	// Barrio's 1%. Empty means the published base plus app-cajadebarrio-cop.
+	WalletPlataforma string
+
 	// TLS is OP_TLS: the wallet addresses and the authorization server are reached by
 	// their public https URLs, as on the VPS. Off, the local stack's http rules apply.
 	TLS bool
@@ -221,6 +229,9 @@ func Load() (Config, error) {
 			KeyID:               strings.TrimSpace(os.Getenv("OP_KEY_ID")),
 			PrivateKeyPath:      defaultString(os.Getenv("OP_PRIVATE_KEY_PATH"), DefaultOPPrivateKeyPath),
 			TLS:                 strings.EqualFold(strings.TrimSpace(os.Getenv("OP_TLS")), "true"),
+			FinishURL:           strings.TrimSpace(os.Getenv("OP_FINISH_URL")),
+			WalletPlataforma: defaultString(os.Getenv("OP_WALLET_PLATAFORMA"),
+				strings.TrimSuffix(rafiki.OpenPaymentsURL, "/")+"/app-cajadebarrio-cop"),
 		},
 		Database: Database{
 			URL: strings.TrimSpace(os.Getenv("DATABASE_URL")),

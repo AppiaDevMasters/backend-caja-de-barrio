@@ -154,7 +154,7 @@ func run() error {
 				slog.Warn("the control panel surface is off", "error", err)
 			}
 			mapa.Register(internal, database)
-			pagos.Register(internal, database)
+			pagos.Register(internal, nuevosPagos(cfg, database, cliente))
 			identidad.Register(internal, deps)
 			cajaroutes.Register(internal, database)
 			mounts = append(mounts, internal.Register)
