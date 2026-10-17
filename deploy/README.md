@@ -88,14 +88,25 @@ red de Docker esos mismos nombres apuntan a Caddy (por alias de red).
 | Reiniciar todo | `docker compose -f rafiki/docker-compose.yml -f deploy/compose.vps.yml restart` |
 | Clave de la UI de Rafiki | `cat deploy/.credenciales-admin` |
 
+## Cambiar de dominio
+
+Borra los datos de Rafiki (wallet addresses, pagos) y vuelve a sembrar el demo. En el VPS, desde la raíz del repo:
+
+```bash
+docker compose -f rafiki/docker-compose.yml -f deploy/compose.vps.yml down -v
+rm -rf rafiki/.env rafiki/config/keys/*.pem rafiki/config/keys/*.raw rafiki/config/keys/jwks.json keys
+DOMINIO=midominio.com sudo -E ./deploy/instalar.sh
+```
+
+Antes, crea registros A para `op`, `auth`, `backend` y `admin` (y `agente` si el agente va en el mismo servidor)
+apuntando a la IP del VPS.
+
 ## Cuidados
 
 - **No cambies `DOMINIO` después del primer arranque.** Rafiki guarda el `authServer` en el tenant y las
-  wallet addresses con su URL completa. Si cambia la IP o el dominio, hay que empezar de cero:
-  `docker compose ... down -v`, borrar `rafiki/.env` y `keys/`, y volver a correr el script.
+  wallet addresses con su URL completa. El script reutiliza el dominio guardado y se niega a cambiarlo; para
+  cambiarlo, ver "Cambiar de dominio".
 - **Secretos:** `rafiki/.env`, `rafiki/config/keys/`, `keys/` y `deploy/.credenciales-admin` viven solo en el
   VPS (están en `.gitignore`). Haz copia de `rafiki/.env` y de las claves si el servidor va a durar.
 - **Let's Encrypt:** el dominio de `sslip.io` debe resolver a la IP del VPS y los puertos 80 y 443 tienen que
   estar abiertos en el firewall del proveedor. Si Caddy no obtiene el certificado, revisa `docker logs caja-de-barrio-caddy`.
-- **Dominio propio:** si más adelante hay uno, se crean registros A para `op`, `auth`, `backend` y `admin`, y se
-  corre el script desde cero con `DOMINIO=midominio.com`.

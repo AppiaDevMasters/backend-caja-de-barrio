@@ -44,7 +44,15 @@ fi
 
 paso "Dominio"
 ip="${IP_PUBLICA:-$(curl -fsS https://api.ipify.org)}"
-dominio="${DOMINIO:-$(echo "$ip" | tr '.' '-').sslip.io}"
+# Orden: DOMINIO del entorno, el que ya quedó guardado en rafiki/.env (para que una
+# reinstalación no lo cambie sin querer) y, si no hay ninguno, <ip-con-guiones>.sslip.io.
+dominio_guardado="$( [ -f "$env_rafiki" ] && env_val DOMINIO || true )"
+dominio="${DOMINIO:-${dominio_guardado:-$(echo "$ip" | tr '.' '-').sslip.io}}"
+if [ -n "$dominio_guardado" ] && [ "$dominio" != "$dominio_guardado" ]; then
+  echo "El dominio cambia de $dominio_guardado a $dominio: Rafiki guarda el dominio en su base," >&2
+  echo "así que hay que empezar de cero (ver 'Cambiar de dominio' en deploy/README.md)." >&2
+  exit 1
+fi
 echo "IP pública: $ip"
 echo "Dominio:    $dominio"
 
