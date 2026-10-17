@@ -497,6 +497,9 @@ func cerrarSiLlego(ctx context.Context, deps Dependencias, reserva store.Reserva
 	if reserva.Debito != nil {
 		debito = *reserva.Debito
 	}
+	if cerrada || reserva.Estado == "pagada" || reserva.Estado == "entregada" {
+		retirarLiquidezCobros(ctx, deps, reserva)
+	}
 	if cerrada {
 		for _, abono := range []struct {
 			wallet, tipo string
@@ -568,6 +571,9 @@ func estadoCobro(deps Dependencias) http.HandlerFunc {
 		}
 		pesos := int64(math.Round(float64(recibido) / math.Pow10(escala)))
 		completado := pesos >= reserva.MontoCOP+reserva.ComisionTenderoCOP
+		if completado && reserva.Estado != "reservada" && reserva.OutgoingPaymentID != nil {
+			retirarLiquidezCobros(r.Context(), deps, reserva)
+		}
 		if completado && reserva.Estado == "reservada" && reserva.OutgoingPaymentID != nil {
 			if _, err := cerrarSiLlego(r.Context(), deps, reserva); err != nil {
 				slog.Error("pagos: closing a payment from its status", "reserva_id", reserva.ID, "error", err)
@@ -575,5 +581,25 @@ func estadoCobro(deps Dependencias) http.HandlerFunc {
 		}
 
 		api.JSON(w, http.StatusOK, map[string]any{"completado": completado, "recibido": pesos})
+	}
+}
+
+// retirarLiquidezCobros takes out of Rafiki what the two collection points received:
+// Rafiki moves money and does not keep balances, and the virtual wallets already
+// credit the store and Caja de Barrio. The withdrawal is idempotent per payment, so
+// calling it again (the payment and its status can both close it) is harmless.
+func retirarLiquidezCobros(ctx context.Context, deps Dependencias, reserva store.ReservaRetiro) {
+	if deps.Liquidez == nil {
+		return
+	}
+	for _, cobro := range []*string{reserva.IncomingPaymentURL, reserva.CobroPlataformaURL} {
+		if cobro == nil || *cobro == "" {
+			continue
+		}
+		id := (*cobro)[strings.LastIndex(*cobro, "/")+1:]
+		if err := deps.Liquidez.WithdrawIncomingPaymentLiquidity(ctx, id); err != nil {
+			slog.Warn("pagos: withdrawing the liquidity of a collection point", "reserva_id", reserva.ID,
+				"cobro", id, "error", err)
+		}
 	}
 }

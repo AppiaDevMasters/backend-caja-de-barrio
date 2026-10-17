@@ -211,7 +211,12 @@ func (o *openPaymentsFalso) CreateOutgoingPayments(_ context.Context, p opclient
 	}, nil
 }
 
-type liquidezFalsa struct{ depositos []string }
+type liquidezFalsa struct{ depositos, retiros []string }
+
+func (l *liquidezFalsa) WithdrawIncomingPaymentLiquidity(_ context.Context, id string) error {
+	l.retiros = append(l.retiros, id)
+	return nil
+}
 
 func (l *liquidezFalsa) DepositOutgoingPaymentLiquidity(_ context.Context, id string) error {
 	l.depositos = append(l.depositos, id)
@@ -338,6 +343,9 @@ func TestElRetiroSePagaDePuntaAPuntaConOpenPayments(t *testing.T) {
 	status, body = e.pedir(t, http.MethodPost, "/pagos/pagos", `{"reserva_id":"res_1"}`)
 	if status != http.StatusOK || body["estado"] != "completado" || body["cupo_disponible"] != float64(1_000_000-205_600) {
 		t.Fatalf("pay = %d %v", status, body)
+	}
+	if len(e.liquidez.retiros) != 2 || e.liquidez.retiros[0] != "1" || e.liquidez.retiros[1] != "2" {
+		t.Fatalf("the ASE must withdraw what both collection points received: %v", e.liquidez.retiros)
 	}
 	if len(e.liquidez.depositos) != 2 || e.liquidez.depositos[0] != "out-1" {
 		t.Fatalf("the ASE must put up the liquidity of both payments: %v", e.liquidez.depositos)

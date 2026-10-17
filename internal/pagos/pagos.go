@@ -64,9 +64,11 @@ type OpenPayments interface {
 	CreateOutgoingPayments(ctx context.Context, params opclient.CreateOutgoingPaymentsParams) (opclient.OutgoingPayments, error)
 }
 
-// Liquidez puts up the liquidity of an outgoing payment (Rafiki's Admin API).
+// Liquidez moves liquidity in and out of Rafiki (its Admin API): it puts up the money
+// of a payment this ASE's client makes, and takes out what a collection point received.
 type Liquidez interface {
 	DepositOutgoingPaymentLiquidity(ctx context.Context, paymentID string) error
+	WithdrawIncomingPaymentLiquidity(ctx context.Context, paymentID string) error
 }
 
 // Cobros reads how much a collection point has received, in the smallest unit of its
