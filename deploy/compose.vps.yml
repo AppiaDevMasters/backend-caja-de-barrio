@@ -105,6 +105,8 @@ services:
       DATABASE_URL: postgres://caja:${CAJA_DB_PASSWORD}@db:5432/caja_de_barrio?sslmode=disable
       SERVICIO_TOKEN: ${SERVICIO_TOKEN:?falta SERVICIO_TOKEN, lo fija deploy/instalar.sh}
       VERIFIK_TOKEN: ${VERIFIK_TOKEN:-}
+      # Avisos a las personas (decisiones del panel): el agente corre en la misma red.
+      AGENTE_URL: http://agente:8080
 
 volumes:
   caddy-data:

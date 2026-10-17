@@ -21,6 +21,22 @@ backend.{$DOMINIO} {
 	reverse_proxy backend:8000
 }
 
+# Agente: UI de ADK (con usuario y clave) y gateway. Los webhooks y la vuelta de la billetera quedan
+# públicos porque los llaman Meta, Didit y el navegador de la persona; /internal/avisos exige su token.
+agente.{$DOMINIO} {
+	encode gzip
+	@publico path /webhook/* /op/finish* /politicas /internal/avisos /health
+	handle @publico {
+		reverse_proxy agente:8080
+	}
+	handle {
+		basic_auth {
+			{$ADMIN_UI_USUARIO} {$ADMIN_UI_HASH}
+		}
+		reverse_proxy agente:8080
+	}
+}
+
 # UI de administración de Rafiki. La imagen corre sin autenticación propia
 # (AUTH_ENABLED=false), así que nunca se publica sin usuario y clave.
 admin.{$DOMINIO} {
