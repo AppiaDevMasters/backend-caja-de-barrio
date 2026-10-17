@@ -73,13 +73,40 @@ services:
     environment:
       OPEN_PAYMENTS_URL: https://op.${DOMINIO}
 
+  # Base del producto (las tablas del contrato), separada de la de Rafiki. La imagen
+  # imresamu/postgis es la de postgis/postgis con arm64, que el VPS necesita.
+  db:
+    image: imresamu/postgis:16-3.5-alpine
+    container_name: caja-de-barrio-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: caja
+      POSTGRES_PASSWORD: ${CAJA_DB_PASSWORD:?falta CAJA_DB_PASSWORD, lo fija deploy/instalar.sh}
+      POSTGRES_DB: caja_de_barrio
+    volumes:
+      - caja-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U caja -d caja_de_barrio']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [rafiki]
+
   backend:
     ports: !reset []
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       LOG_LEVEL: info
       RAFIKI_OPEN_PAYMENTS_URL: https://op.${DOMINIO}
       RAFIKI_AUTH_SERVER_PUBLIC_URL: https://auth.${DOMINIO}
+      # Superficie /internal del contrato: se monta solo con base y token.
+      DATABASE_URL: postgres://caja:${CAJA_DB_PASSWORD}@db:5432/caja_de_barrio?sslmode=disable
+      SERVICIO_TOKEN: ${SERVICIO_TOKEN:?falta SERVICIO_TOKEN, lo fija deploy/instalar.sh}
+      VERIFIK_TOKEN: ${VERIFIK_TOKEN:-}
 
 volumes:
   caddy-data:
   caddy-config:
+  caja-db-data:
