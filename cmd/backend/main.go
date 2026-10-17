@@ -115,6 +115,9 @@ func run() error {
 			if err != nil {
 				return err
 			}
+			if err := validarModoTestnet(ctx, cfg, cliente); err != nil {
+				return err
+			}
 
 			// Didit (5.5 to 5.7). Without its API key the routes stay mounted and answer
 			// that the provider is not configured.
