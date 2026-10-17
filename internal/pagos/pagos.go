@@ -62,6 +62,11 @@ type OpenPayments interface {
 	CreateIncomingPayments(ctx context.Context, params opclient.CreateIncomingPaymentsParams) (opclient.IncomingPayments, error)
 	CreateQuotes(ctx context.Context, params opclient.CreateQuotesParams) (opclient.Quotes, error)
 	CreateOutgoingPayments(ctx context.Context, params opclient.CreateOutgoingPaymentsParams) (opclient.OutgoingPayments, error)
+
+	// The one-collection-point calls of the testnet mode.
+	CreateIncomingPayment(ctx context.Context, walletAddress string, amount int64) (opclient.IncomingPayment, error)
+	CreateQuoteByReceiver(ctx context.Context, clientWalletAddress, receiver string) (opclient.Quote, error)
+	CreateOutgoingPayment(ctx context.Context, clientWalletAddress, quoteURL string, token opclient.AccessToken) (opclient.OutgoingPayment, opclient.AccessToken, error)
 }
 
 // Liquidez moves liquidity in and out of Rafiki (its Admin API): it puts up the money
@@ -94,6 +99,16 @@ type Config struct {
 	EsperaCobro time.Duration
 	// EsperaGrant is the wait GNAP imposes before a grant can be continued.
 	EsperaGrant time.Duration
+
+	// Testnet turns on the testnet mode (OP_MODO=testnet, docs/modo-testnet.md): the
+	// person and the store pay and collect with these wallets of the Interledger testnet,
+	// with one collection point, no virtual wallet and no liquidity of this ASE.
+	Testnet bool
+	// WalletClienteTestnet and WalletTiendaTestnet replace the stored wallets.
+	WalletClienteTestnet string
+	WalletTiendaTestnet  string
+	// CupoTestnet is the cupo's ceiling in whole units of the client's asset.
+	CupoTestnet int64
 }
 
 // Dependencias are the collaborators of the payment routes.
@@ -229,4 +244,30 @@ func LeerCobroPublico(client *http.Client) Cobros {
 
 		return recibido, documento.ReceivedAmount.AssetScale, nil
 	}
+}
+
+// aplicarModo puts the testnet wallets on a reservation read from the database: every
+// route then works with them, and the database keeps the wallets it has.
+func aplicarModo(deps Dependencias, reserva *store.ReservaRetiro) {
+	if !deps.Config.Testnet {
+		return
+	}
+	reserva.WalletCliente = deps.Config.WalletClienteTestnet
+	reserva.WalletTienda = deps.Config.WalletTiendaTestnet
+}
+
+// sinFondos says whether a payment error means the client's wallet has no money for it.
+func sinFondos(err error) bool {
+	if err == nil {
+		return false
+	}
+	texto := strings.ToLower(err.Error())
+
+	return strings.Contains(texto, "insufficient") || strings.Contains(texto, "funds") || strings.Contains(texto, "balance")
+}
+
+// montoBody is an Open Payments amount as the routes return it: its smallest-unit value
+// with the asset and scale it is expressed in, never assumed to be COP at scale 2.
+func montoBody(a opclient.Amount) map[string]any {
+	return map[string]any{"value": a.Value, "asset_code": a.AssetCode, "asset_scale": a.AssetScale}
 }

@@ -73,7 +73,11 @@ func pedirCupo(deps Dependencias) http.HandlerFunc {
 			return
 		}
 		wallet := normalizarWallet(persona.WalletAddress)
-		if body.WalletCliente != "" && !mismaWallet(body.WalletCliente, wallet) {
+		if deps.Config.Testnet {
+			// The demo's testnet wallet replaces the stored one (docs/modo-testnet.md).
+			wallet = deps.Config.WalletClienteTestnet
+		}
+		if body.WalletCliente != "" && !deps.Config.Testnet && !mismaWallet(body.WalletCliente, wallet) {
 			api.Fail(w, api.Errorf(api.CodeDatosNoCoinciden, "La billetera no corresponde a la persona."))
 
 			return
@@ -101,6 +105,10 @@ func pedirCupo(deps Dependencias) http.HandlerFunc {
 			return
 		}
 		limite, ok := limitesCupo[documento.AssetCode]
+		if deps.Config.Testnet {
+			// The ceiling travels in the CLIENT's asset (USD in the demo), not in pesos.
+			limite, ok = deps.Config.CupoTestnet, deps.Config.CupoTestnet > 0
+		}
 		if !ok {
 			api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "La moneda %s no tiene cupo definido.", documento.AssetCode))
 
@@ -132,7 +140,7 @@ func pedirCupo(deps Dependencias) http.HandlerFunc {
 			PersonaID: persona.ID, GrantID: grantID, WalletAddress: wallet, Limite: float64(limite),
 			Moneda: documento.AssetCode, Intervalo: "P7D", ContinueURI: grant.ContinueURI,
 			ContinueToken: grant.ContinueToken, ClientNonce: grant.ClientNonce, ServerNonce: grant.ServerNonce,
-			AuthServer: deps.Config.AuthServerHash,
+			AuthServer: authServerDelHash(deps, grant),
 		})
 		if errors.Is(err, store.ErrCupoAprobado) {
 			api.Fail(w, api.Errorf(api.CodeEstadoInvalido, "La persona ya aprobó su cupo."))
@@ -241,4 +249,15 @@ func continuarCupo(deps Dependencias) http.HandlerFunc {
 
 		api.JSON(w, http.StatusOK, respuesta)
 	}
+}
+
+// authServerDelHash is the authorization server the callback hash binds. The own ASE is
+// configured with it (its public base plus the tenant); on the testnet it is the one the
+// client's wallet announced, which is the one the grant was asked of.
+func authServerDelHash(deps Dependencias, grant opclient.OutgoingPaymentGrant) string {
+	if deps.Config.Testnet && grant.AuthServer != "" {
+		return grant.AuthServer
+	}
+
+	return deps.Config.AuthServerHash
 }

@@ -158,9 +158,9 @@ func (s *Store) BloquearPorRiesgo(ctx context.Context, alertaID, personaID, tien
 func (s *Store) GuardarCobros(ctx context.Context, reservaID, tiendaURL, plataformaURL string) error {
 	const query = `
 		insert into retiros (reserva_id, incoming_payment_url, cobro_plataforma_url)
-		values ($1, $2, $3)
+		values ($1, $2, nullif($3, ''))
 		on conflict (reserva_id) do update
-		set incoming_payment_url = $2, cobro_plataforma_url = $3, actualizado_en = now()`
+		set incoming_payment_url = $2, cobro_plataforma_url = nullif($3, ''), actualizado_en = now()`
 	if _, err := s.pool.Exec(ctx, query, reservaID, tiendaURL, plataformaURL); err != nil {
 		return fmt.Errorf("store: recording the collection points of %s: %w", reservaID, err)
 	}
@@ -178,7 +178,7 @@ func (s *Store) GuardarCotizacion(ctx context.Context, reservaID, quoteURL, quot
 	defer tx.Rollback(ctx) //nolint:errcheck // a rollback after commit is a no-op
 
 	if _, err := tx.Exec(ctx, `
-		update retiros set quote_url = $2, quote_plataforma_url = $3, debito = $4, moneda = $5, quote_vence_en = $6,
+		update retiros set quote_url = $2, quote_plataforma_url = nullif($3, ''), debito = $4, moneda = $5, quote_vence_en = $6,
 		       actualizado_en = now()
 		where reserva_id = $1`, reservaID, quoteURL, quotePlataformaURL, debito, moneda, vence); err != nil {
 		return fmt.Errorf("store: recording the quote of %s: %w", reservaID, err)
@@ -244,7 +244,7 @@ func (s *Store) GuardarPagos(ctx context.Context, reservaID, outTienda, outPlata
 		return fmt.Errorf("store: encoding the payment of %s: %w", reservaID, err)
 	}
 	if _, err := s.pool.Exec(ctx, `
-		update retiros set outgoing_payment_id = $2, outgoing_plataforma_id = $3, resultado = $4, actualizado_en = now()
+		update retiros set outgoing_payment_id = $2, outgoing_plataforma_id = nullif($3, ''), resultado = $4, actualizado_en = now()
 		where reserva_id = $1`, reservaID, outTienda, outPlataforma, cuerpo); err != nil {
 		return fmt.Errorf("store: recording the payment of %s: %w", reservaID, err)
 	}
