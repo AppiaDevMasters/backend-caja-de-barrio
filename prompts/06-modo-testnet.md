@@ -84,6 +84,19 @@ Fecha: madrugada del 2026-10-17. Herramienta: Claude Code (Claude Opus 5.5). Tex
   - los dos montos completos, con `asset_code` y `asset_scale`, viajan en las respuestas de cotizar y pagar, y quedan
     en `retiros.resultado` al pagar.
 
+## Mensajes durante la prueba real (textuales)
+
+> e481950a-0464-41fe-92fe-2fe2f16be887
+
+(El Key ID. La primera corrida falló con `400 could not determine client`: la llave no estaba en `app-cajadebarrio`.)
+
+> (captura de la test wallet: la llave `keyOfHackaton` atada a `$ilp.interledger-test.dev/9f9bfa3d`)
+
+> listo
+
+(La persona aprobó el cupo en la test wallet. El pago terminó **COMPLETADO**: 3,47 USD de `andres-cajadebarrio`
+fueron 11.000 COP en `laura-cajadebarrio`. Ver `docs/modo-testnet.md`, "Evidencia".)
+
 ## Resultado
 
 - Rama `feat/modo-testnet`, sin mezclar a main ni desplegar.

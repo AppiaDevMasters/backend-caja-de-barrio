@@ -31,7 +31,7 @@ En `deploy/llaves.env` (o en el entorno local). **Las llaves nunca van a git**:
 ```
 OP_MODO=testnet
 OP_TLS=true
-OP_CLIENT_WALLET_ADDRESS=https://ilp.interledger-test.dev/app-cajadebarrio
+OP_CLIENT_WALLET_ADDRESS=https://ilp.interledger-test.dev/9f9bfa3d
 OP_KEY_ID=<el Key ID que muestra la test wallet para esa llave>
 OP_PRIVATE_KEY_PATH=/home/backend/keys/testnet-private.key
 OP_TESTNET_WALLET_CLIENTE=https://ilp.interledger-test.dev/andres-cajadebarrio
@@ -40,8 +40,10 @@ OP_TESTNET_CUPO=100
 OP_FINISH_URL=https://agente.cajadebarrio.lat/op/finish
 ```
 
-- `OP_CLIENT_WALLET_ADDRESS` y la llave son las de `app-cajadebarrio`. Solo identifican a la app, así que su moneda
-  (EUR) no importa.
+- `OP_CLIENT_WALLET_ADDRESS` es **la wallet a la que está atada la llave** en la test wallet (Settings → Developer
+  Keys). Hoy es `9f9bfa3d`, de la cuenta EUR. Si se usa otra wallet sin llave, el testnet responde
+  `400 could not determine client`. Se comprueba con `curl https://ilp.interledger-test.dev/<wallet>/jwks.json`,
+  que debe listar el `kid`. Solo identifica a la app, así que su moneda no importa.
 - Al arrancar, el backend **resuelve las dos wallets** por Open Payments. Si alguna no resuelve, no arranca y dice
   cuál es.
 - Para volver al modo de siempre: `OP_MODO=propio`, o quitar la variable, y restaurar `OP_CLIENT_WALLET_ADDRESS`,
@@ -63,7 +65,7 @@ Se corre **en el computador de quien aprueba**, porque al aprobar el navegador v
 docker run --rm -it -p 8099:8099 -v "$PWD:/src" -w /src \
   -v "$HOME/Downloads/private.key:/keys/testnet.key:ro" \
   -e OP_MODO=testnet -e OP_TLS=true \
-  -e OP_CLIENT_WALLET_ADDRESS=https://ilp.interledger-test.dev/app-cajadebarrio \
+  -e OP_CLIENT_WALLET_ADDRESS=https://ilp.interledger-test.dev/9f9bfa3d \
   -e OP_KEY_ID=<key id> -e OP_PRIVATE_KEY_PATH=/keys/testnet.key \
   -e OP_TESTNET_WALLET_CLIENTE=https://ilp.interledger-test.dev/andres-cajadebarrio \
   -e OP_TESTNET_WALLET_TIENDA=https://ilp.interledger-test.dev/laura-cajadebarrio \
@@ -73,6 +75,19 @@ docker run --rm -it -p 8099:8099 -v "$PWD:/src" -w /src \
 
 El comando imprime un enlace: ábrelo, entra a la test wallet y **aprueba**. Al volver el navegador, el comando sigue
 solo y termina con *"el dinero se movió de USD a COP en el testnet"*.
+
+## Evidencia: el pago real (2026-10-17, 08:33 en Colombia)
+
+`cmd/retiro -testnet -monto 10000`, con la aprobación del cupo hecha por una persona en la test wallet:
+
+| Paso | Resultado |
+|---|---|
+| Wallets | cliente `andres-cajadebarrio` en **USD** (escala 2) · tienda `laura-cajadebarrio` en **COP** (escala 2) |
+| Cupo | 100 USD; aprobado en la test wallet; **hash del callback verificado** contra `https://auth.interledger-test.dev/f537937b-…` |
+| Cobro de la tienda | `incoming-payments/174553ca-bbdb-49cd-a5b7-797ecb79b8a5` por 11.000 COP (10.000 más 1.000 de comisión) |
+| Cotización por receptor | `quotes/1dc48616-b9c6-409c-90c4-82e9c58cd93a`: **debita 3,47 USD y recibe 11.000,00 COP** |
+| Pago saliente | `outgoing-payments/1dc48616-b9c6-409c-90c4-82e9c58cd93a` |
+| Cobro | **COMPLETADO**: la tienda recibió 11.000,00 COP |
 
 ## Qué no hace (a propósito)
 
