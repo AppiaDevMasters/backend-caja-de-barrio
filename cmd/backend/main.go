@@ -14,6 +14,7 @@ import (
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/api"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/ase"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/config"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/didit"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/httpserver"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/identidad"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/mapa"
@@ -110,8 +111,37 @@ func run() error {
 				return err
 			}
 
+			// Didit (5.5 to 5.7). Without its API key the routes stay mounted and answer
+			// that the provider is not configured.
+			deps := identidad.Dependencias{Datos: database, Cedulas: cedulas, Carteras: cliente}
+			if cfg.Didit.APIKey != "" {
+				// The webhook route never trusts the body (it reads the decision back from
+				// the provider), so the secret is optional here; the client only refuses an
+				// empty one because its own webhook check would need it.
+				secreto := cfg.Didit.WebhookSecret
+				if secreto == "" {
+					secreto = "sin-secreto-de-webhook"
+				}
+				diditCliente, err := didit.New(cfg.Didit.APIKey, cfg.Didit.WorkflowID, secreto)
+				if err != nil {
+					return err
+				}
+				deps.Didit = diditCliente
+				deps.Verificaciones = database
+				deps.ConfigDidit = identidad.ConfigDidit{
+					WorkflowRegistro:   cfg.Didit.WorkflowID,
+					WorkflowBiometrico: cfg.Didit.BiometricWorkflowID,
+					CallbackURL:        cfg.Didit.CallbackURL,
+				}
+				if billeteras, err := nuevasBilleteras(cfg); err == nil {
+					deps.Billeteras = billeteras
+				} else {
+					slog.Warn("registration will not create wallets", "error", err)
+				}
+			}
+
 			mapa.Register(internal, database)
-			identidad.Register(internal, identidad.Dependencias{Datos: database, Cedulas: cedulas, Carteras: cliente})
+			identidad.Register(internal, deps)
 			mounts = append(mounts, internal.Register)
 		}
 	}
