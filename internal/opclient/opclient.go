@@ -41,6 +41,13 @@ type Config struct {
 	// KeyID is the kid the key is registered under. Empty means the RFC 7638
 	// thumbprint of the key, which is the name the seed registers it with.
 	KeyID string
+
+	// HostRewrites maps a host the stack publishes for a browser to the address that resolves
+	// inside its network. The authorization server announces its continuation and its token
+	// management URLs with the published host, which a container cannot reach, and those URLs
+	// have to be rewritten BEFORE they are signed: the signature covers the target URI, so
+	// rewriting them on the way out would produce a signature that cannot verify.
+	HostRewrites map[string]string
 }
 
 // WalletAddress is the document the ASE publishes for one wallet address, reduced
@@ -57,7 +64,8 @@ type WalletAddress struct {
 // Client is the authenticated Open Payments client: it signs every request with
 // the key of the wallet address it acts as.
 type Client struct {
-	sdk *openpayments.AuthenticatedClient
+	sdk      *openpayments.AuthenticatedClient
+	rewrites map[string]string
 }
 
 // New builds the authenticated client from the configured key.
@@ -102,7 +110,26 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("opclient: building the authenticated client: %w", err)
 	}
 
-	return &Client{sdk: sdk}, nil
+	return &Client{sdk: sdk, rewrites: cfg.HostRewrites}, nil
+}
+
+// reachable is a URL with the published host replaced by the address that resolves inside the
+// network. The URLs of the authorization server come back with the host of the demo, and every
+// one of them has to be reachable BEFORE the SDK signs it.
+func (c *Client) reachable(rawURL string) string {
+	if len(c.rewrites) == 0 {
+		return rawURL
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	if internal, ok := c.rewrites[parsed.Host]; ok {
+		parsed.Host = internal
+	}
+
+	return parsed.String()
 }
 
 // ResolveWalletAddress reads the document the ASE publishes for a wallet address.
@@ -771,9 +798,12 @@ func (c *Client) RequestOutgoingPaymentGrant(ctx context.Context, params Outgoin
 	}
 
 	return OutgoingPaymentGrant{
-		ID:            grantID,
+		ID: grantID,
+		// The continuation is called from inside the network, so its host is made reachable here;
+		// the redirect is NOT: the user's browser opens that one, and it needs the host the
+		// stack publishes.
 		RedirectURL:   grant.Interact.Redirect,
-		ContinueURI:   grant.Continue.Uri,
+		ContinueURI:   c.reachable(grant.Continue.Uri),
 		ContinueToken: grant.Continue.AccessToken.Value,
 		ClientNonce:   clientNonce,
 		ServerNonce:   grant.Interact.Finish,
@@ -816,7 +846,7 @@ func (c *Client) ContinueOutgoingPaymentGrant(ctx context.Context, params Contin
 		return AccessToken{}, errors.New("opclient: InteractRef is empty")
 	}
 
-	grant, err := c.sdk.Grant.Continue(ctx, openpayments.GrantContinueParams{URL: params.ContinueURI, AccessToken: params.ContinueToken, InteractRef: params.InteractRef})
+	grant, err := c.sdk.Grant.Continue(ctx, openpayments.GrantContinueParams{URL: c.reachable(params.ContinueURI), AccessToken: params.ContinueToken, InteractRef: params.InteractRef})
 	if err != nil {
 		return AccessToken{}, fmt.Errorf("opclient: continuing the grant of the client at %s: %w", params.ContinueURI, err)
 	}
@@ -838,7 +868,7 @@ func (c *Client) RotateAccessToken(ctx context.Context, manageURL, accessToken s
 		return AccessToken{}, errors.New("opclient: accessToken is empty")
 	}
 
-	rotated, err := c.sdk.Token.Rotate(ctx, openpayments.TokenRotateParams{URL: manageURL, AccessToken: accessToken})
+	rotated, err := c.sdk.Token.Rotate(ctx, openpayments.TokenRotateParams{URL: c.reachable(manageURL), AccessToken: accessToken})
 	if err != nil {
 		return AccessToken{}, fmt.Errorf("opclient: rotating the access token at %s: %w", manageURL, err)
 	}

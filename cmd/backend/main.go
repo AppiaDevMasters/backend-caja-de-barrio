@@ -104,6 +104,7 @@ func run() error {
 				WalletAddressURL: cfg.OP.ClientWalletAddress,
 				PrivateKeyPath:   cfg.OP.PrivateKeyPath,
 				KeyID:            cfg.OP.KeyID,
+				HostRewrites:     cfg.HostRewrites(),
 			})
 			if err != nil {
 				return err

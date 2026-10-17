@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -175,6 +176,22 @@ func Load() (Config, error) {
 			Token: strings.TrimSpace(os.Getenv("VERIFIK_TOKEN")),
 		},
 	}, nil
+}
+
+// HostRewrites is the map a client needs to make the authorization server reachable from inside
+// the network: its continuation and token management URLs come back with the host the stack
+// publishes for a browser, and a container cannot reach the host's published ports.
+func (c Config) HostRewrites() map[string]string {
+	publica, err := url.Parse(c.Rafiki.AuthServerPublicURL)
+	if err != nil || publica.Host == "" {
+		return nil
+	}
+	interna, err := url.Parse(c.Rafiki.AuthServerURL)
+	if err != nil || interna.Host == "" || interna.Host == publica.Host {
+		return nil
+	}
+
+	return map[string]string{publica.Host: interna.Host}
 }
 
 func defaultString(raw, fallback string) string {
