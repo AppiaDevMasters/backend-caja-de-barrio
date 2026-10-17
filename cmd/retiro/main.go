@@ -64,6 +64,7 @@ func main() {
 
 func run() error {
 	monto := flag.Int64("monto", 10_000, "monto del retiro en pesos enteros")
+	testnet := flag.Bool("testnet", false, "correr el retiro en el testnet de Interledger (OP_MODO=testnet): cliente USD, tienda COP, un cobro y aprobación humana del cupo")
 	fondear := flag.Bool("fondear", false, "adelantar la liquidez de los dos pagos desde el ASE; solo para el ensayo local, donde el cliente y el receptor son el mismo ASE")
 	flag.Parse()
 
@@ -84,6 +85,10 @@ func run() error {
 	})
 	if err != nil {
 		return err
+	}
+
+	if *testnet {
+		return retiroTestnet(ctx, cfg, cliente, *monto)
 	}
 
 	base := strings.TrimSuffix(cfg.Rafiki.OpenPaymentsURL, "/")
