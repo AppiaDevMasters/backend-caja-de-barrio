@@ -111,6 +111,9 @@ services:
       SERVICIO_TOKEN: ${SERVICIO_TOKEN:?falta SERVICIO_TOKEN, lo fija deploy/instalar.sh}
       # El backend lee VERIFIK_TOKEN; en deploy/llaves.env se llama VERIFIK_API_KEY.
       VERIFIK_TOKEN: ${VERIFIK_API_KEY:-}
+      # La llave del cliente de Open Payments: la del Rafiki propio por defecto; en OP_MODO=testnet,
+      # la de la test wallet (docs/modo-testnet.md). El compose base la fija, por eso se reabre aquí.
+      OP_PRIVATE_KEY_PATH: ${OP_PRIVATE_KEY_PATH:-/home/backend/keys/op-private-key.pem}
 
 volumes:
   caddy-data:
