@@ -49,6 +49,9 @@ func run() error {
 		// and the one the user's browser opens for the final redirect.
 		AuthServerURL:       cfg.Rafiki.AuthServerURL,
 		AuthServerPublicURL: cfg.Rafiki.AuthServerPublicURL,
+		// The identity provider reads and resolves the interaction on the interaction server,
+		// which is a different address and a different path than the browser's.
+		InteractionServerURL: cfg.Rafiki.InteractionServerURL,
 	})
 	if err != nil {
 		return err

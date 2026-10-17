@@ -91,7 +91,13 @@ func New(cfg Config) (*Client, error) {
 		Transport: downgradeTransport{host: parsed.Host, next: http.DefaultTransport},
 	}
 
-	sdk, err := openpayments.NewAuthenticatedClient(addressURL, cfg.PrivateKeyPath, kid, openpayments.WithHTTPClientAuthed(httpClient))
+	// The client identifies itself, and SIGNS, with the URL the ASE actually serves. The
+	// signature covers the target URI, so the scheme is part of what is signed: signing the
+	// https address while calling http produces a signature the resource server cannot
+	// verify, because it rebuilds the target URI from the request it receives. The first
+	// live withdrawal found exactly that (401 "provided signature is invalid"), and the
+	// transport below applies the same rule to the calls.
+	sdk, err := openpayments.NewAuthenticatedClient(httpForm(addressURL), cfg.PrivateKeyPath, kid, openpayments.WithHTTPClientAuthed(httpClient))
 	if err != nil {
 		return nil, fmt.Errorf("opclient: building the authenticated client: %w", err)
 	}
@@ -161,6 +167,19 @@ func parseWalletAddressURL(raw string) (string, *url.URL, error) {
 	}
 
 	return trimmed, parsed, nil
+}
+
+// httpForm is the address of this client with the scheme the ASE serves it with. The ASE
+// publishes https because Rafiki refuses anything else and the local stack has no TLS, so
+// the URL that travels in a signature and in a grant has to be the http one: the signature
+// binds the target URI, and the resource server rebuilds that target from the request.
+func httpForm(addressURL string) string {
+	parsed, err := url.Parse(addressURL)
+	if err != nil || parsed.Scheme != "https" {
+		return addressURL
+	}
+
+	return "http://" + parsed.Host + parsed.Path
 }
 
 // downgradeTransport sends over http the requests addressed in https to the host of
@@ -310,7 +329,7 @@ func (c *Client) createIncomingPayment(ctx context.Context, point collectionPoin
 	amount := rs.Amount{AssetCode: address.AssetCode, AssetScale: address.AssetScale, Value: value}
 
 	payment, err := c.sdk.IncomingPayment.Create(ctx, openpayments.IncomingPaymentCreateParams{
-		BaseURL:     address.URL,
+		BaseURL:     address.ResourceServer,
 		AccessToken: token,
 		Payload: rs.CreateIncomingPaymentRequest{
 			WalletAddressSchema: address.URL,
@@ -484,7 +503,7 @@ func (c *Client) createQuote(ctx context.Context, address WalletAddress, token, 
 	// A named variant travels directly: a quote by receiver with a debit amount
 	// fixed up front, so the caller knows the total before approving it.
 	quote, err := c.sdk.Quote.Create(ctx, openpayments.QuoteCreateParams{
-		BaseURL:     address.URL,
+		BaseURL:     address.ResourceServer,
 		AccessToken: token,
 		Payload: rs.CreateQuoteRequestWithDebitAmount{
 			WalletAddressSchema: address.URL,
@@ -910,7 +929,16 @@ func (c *Client) CreateOutgoingPayments(ctx context.Context, params CreateOutgoi
 		return OutgoingPayments{}, err
 	}
 
-	store, err := c.createOutgoingPayment(ctx, "the store", clientWallet, params.StoreQuoteURL, params.Token.Value)
+	// The client's own document is resolved first: the resource server it announces is the
+	// base of every payment, and the wallet address URL is what the payload names. Using the
+	// wallet address URL as the base works only while the two share scheme and host, and this
+	// ASE publishes its address in https while answering on http.
+	address, err := c.ResolveWalletAddress(ctx, clientWallet)
+	if err != nil {
+		return OutgoingPayments{}, fmt.Errorf("opclient: the client: %w", err)
+	}
+
+	store, err := c.createOutgoingPayment(ctx, address.ResourceServer, "the store", clientWallet, params.StoreQuoteURL, params.Token.Value)
 	if err != nil {
 		return OutgoingPayments{}, err
 	}
@@ -922,7 +950,7 @@ func (c *Client) CreateOutgoingPayments(ctx context.Context, params CreateOutgoi
 		return OutgoingPayments{Store: store}, fmt.Errorf("opclient: the store was paid (%s) and rotating its token failed: %w", store.URL, err)
 	}
 
-	platform, err := c.createOutgoingPayment(ctx, "the platform", clientWallet, params.PlatformQuoteURL, rotated.Value)
+	platform, err := c.createOutgoingPayment(ctx, address.ResourceServer, "the platform", clientWallet, params.PlatformQuoteURL, rotated.Value)
 	if err != nil {
 		return OutgoingPayments{Store: store}, err
 	}
@@ -941,7 +969,7 @@ func (c *Client) CreateOutgoingPayments(ctx context.Context, params CreateOutgoi
 // createOutgoingPayment pays one quote from the client wallet with one access
 // token. A payment the resource server reports as failed is an error, not a
 // success: the money did not move, and the caller must not go on as if it had.
-func (c *Client) createOutgoingPayment(ctx context.Context, role, clientWallet, quoteURL, accessToken string) (OutgoingPayment, error) {
+func (c *Client) createOutgoingPayment(ctx context.Context, baseURL, role, clientWallet, quoteURL, accessToken string) (OutgoingPayment, error) {
 	var payload rs.CreateOutgoingPaymentRequest
 	if err := payload.FromCreateOutgoingPaymentRequestFromQuote(rs.CreateOutgoingPaymentRequestFromQuote{
 		WalletAddressSchema: clientWallet,
@@ -951,7 +979,7 @@ func (c *Client) createOutgoingPayment(ctx context.Context, role, clientWallet, 
 	}
 
 	payment, err := c.sdk.OutgoingPayment.Create(ctx, openpayments.OutgoingPaymentCreateParams{
-		BaseURL:     clientWallet,
+		BaseURL:     baseURL,
 		AccessToken: accessToken,
 		Payload:     payload,
 	})

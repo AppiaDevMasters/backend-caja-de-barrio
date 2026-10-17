@@ -299,14 +299,14 @@ func TestCreateIncomingPayments(t *testing.T) {
 			fmt.Fprint(w, walletAddressDocument(
 				"https://"+r.Host+r.URL.Path,
 				storeAuth.URL,
-				"https://"+r.Host+"/tenant",
+				"https://"+r.Host+r.URL.Path,
 			))
 		case r.Method == http.MethodGet && r.URL.Path == "/app-cajadebarrio-cop":
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, walletAddressDocument(
 				"https://"+r.Host+r.URL.Path,
 				platformAuth.URL,
-				"https://"+r.Host+"/tenant",
+				"https://"+r.Host+r.URL.Path,
 			))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/incoming-payments"):
 			var body map[string]any
@@ -326,6 +326,15 @@ func TestCreateIncomingPayments(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprintf(w, `{"id":%q,"walletAddress":%q,"completed":false,"incomingAmount":%s,"receivedAmount":{"assetCode":"COP","assetScale":2,"value":"0"},"methods":[]}`,
 				walletAddress+"/incoming-payments/ip-1", walletAddress, incomingAmount)
+		case r.Method == http.MethodGet:
+			// El documento de la cuenta: el cliente resuelve el suyo antes de pagar,
+			// porque el resource server que anuncia es la base de los pagos.
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, walletAddressDocument(
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+			))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -368,8 +377,11 @@ func TestCreateIncomingPayments(t *testing.T) {
 	if storeItem["identifier"] != storeURL {
 		t.Errorf("store grant access identifier = %v, want %s", storeItem["identifier"], storeURL)
 	}
-	if clientField, ok := storeRequests[0]["client"].(map[string]any); !ok || clientField["walletAddress"] != ownURL {
-		t.Errorf("store grant client = %v, want the wallet address this client acts as (%s)", storeRequests[0]["client"], ownURL)
+	// The client signs with the URL the ASE serves it with, and the scheme is part of what a
+	// signature covers.
+	ownIdentity := "http://" + strings.TrimPrefix(ownURL, "https://")
+	if clientField, ok := storeRequests[0]["client"].(map[string]any); !ok || clientField["walletAddress"] != ownIdentity {
+		t.Errorf("store grant client = %v, want the identity this client signs with (%s)", storeRequests[0]["client"], ownIdentity)
 	}
 
 	// The platform grant goes to the platform auth server, on the platform wallet.
@@ -460,7 +472,7 @@ func TestCreateQuotes(t *testing.T) {
 			fmt.Fprint(w, walletAddressDocument(
 				"https://"+r.Host+r.URL.Path,
 				clientAuth.URL,
-				"https://"+r.Host+"/tenant",
+				"https://"+r.Host+r.URL.Path,
 			))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/quotes"):
 			var body map[string]any
@@ -487,6 +499,15 @@ func TestCreateQuotes(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprintf(w, `{"id":%q,"method":"ilp","walletAddress":%q,"receiver":%q,"debitAmount":{"assetCode":"COP","assetScale":2,"value":%q},"receiveAmount":{"assetCode":"COP","assetScale":2,"value":%q},"expiresAt":%q}`,
 				"https://"+r.Host+r.URL.Path+"/q1", "https://"+r.Host+"/laura-cajadebarrio", body["receiver"], value, value, expiresAt)
+		case r.Method == http.MethodGet:
+			// El documento de la cuenta: el cliente resuelve el suyo antes de pagar,
+			// porque el resource server que anuncia es la base de los pagos.
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, walletAddressDocument(
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+			))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -798,7 +819,7 @@ func TestCreateIncomingPaymentsRequiresANonInteractiveGrant(t *testing.T) {
 				fmt.Fprint(w, walletAddressDocument(
 					"https://"+r.Host+r.URL.Path,
 					auth.URL,
-					"https://"+r.Host+"/tenant",
+					"https://"+r.Host+r.URL.Path,
 				))
 			}))
 			defer resource.Close()
@@ -865,7 +886,7 @@ func TestRequestOutgoingPaymentGrant(t *testing.T) {
 		fmt.Fprint(w, walletAddressDocument(
 			"https://"+r.Host+r.URL.Path,
 			auth.URL,
-			"https://"+r.Host+"/tenant",
+			"https://"+r.Host+r.URL.Path,
 		))
 	}))
 	defer resource.Close()
@@ -994,7 +1015,7 @@ func TestRequestOutgoingPaymentGrantKeepsAnExistingQueryOnTheFinishURL(t *testin
 		fmt.Fprint(w, walletAddressDocument(
 			"https://"+r.Host+r.URL.Path,
 			auth.URL,
-			"https://"+r.Host+"/tenant",
+			"https://"+r.Host+r.URL.Path,
 		))
 	}))
 	defer resource.Close()
@@ -1048,7 +1069,7 @@ func TestRequestOutgoingPaymentGrantRejectsAGrantWithoutInteraction(t *testing.T
 		fmt.Fprint(w, walletAddressDocument(
 			"https://"+r.Host+r.URL.Path,
 			auth.URL,
-			"https://"+r.Host+"/tenant",
+			"https://"+r.Host+r.URL.Path,
 		))
 	}))
 	defer resource.Close()
@@ -1291,6 +1312,15 @@ func TestCreateOutgoingPayments(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, `{"access_token":{"access":[],"value":%q,"manage":%q,"expires_in":600}}`, value, manage)
+		case r.Method == http.MethodGet:
+			// El documento de la cuenta: el cliente resuelve el suyo antes de pagar,
+			// porque el resource server que anuncia es la base de los pagos.
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, walletAddressDocument(
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+			))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1423,6 +1453,15 @@ func TestCreateOutgoingPaymentsKeepsThePaymentsAlreadyMadeWhenARotationFails(t *
 			}
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, `{"access_token":{"access":[],"value":"PDP_rotado_1","manage":"https://%s/token/abc-2","expires_in":600}}`, r.Host)
+		case r.Method == http.MethodGet:
+			// El documento de la cuenta: el cliente resuelve el suyo antes de pagar,
+			// porque el resource server que anuncia es la base de los pagos.
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, walletAddressDocument(
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+			))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1480,6 +1519,15 @@ func TestCreateOutgoingPaymentsKeepsTheStorePaymentWhenTheFirstRotationFails(t *
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/token/"):
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprint(w, `{"error":"la rotacion se cayo"}`)
+		case r.Method == http.MethodGet:
+			// El documento de la cuenta: el cliente resuelve el suyo antes de pagar,
+			// porque el resource server que anuncia es la base de los pagos.
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, walletAddressDocument(
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+			))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1537,6 +1585,15 @@ func TestCreateOutgoingPaymentsKeepsTheStorePaymentWhenThePlatformPaymentFails(t
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/token/"):
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, `{"access_token":{"access":[],"value":"PDP_rotado_1","manage":"https://%s/token/abc-2","expires_in":600}}`, r.Host)
+		case r.Method == http.MethodGet:
+			// El documento de la cuenta: el cliente resuelve el suyo antes de pagar,
+			// porque el resource server que anuncia es la base de los pagos.
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, walletAddressDocument(
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+			))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1588,6 +1645,15 @@ func TestCreateOutgoingPaymentsReportsAFailedPaymentAsAnError(t *testing.T) {
 			rotations++
 			mu.Unlock()
 			fmt.Fprint(w, `{"access_token":{"access":[],"value":"PDP_rotado_1","manage":"https://x/token/abc-2","expires_in":600}}`)
+		case r.Method == http.MethodGet:
+			// El documento de la cuenta: el cliente resuelve el suyo antes de pagar,
+			// porque el resource server que anuncia es la base de los pagos.
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, walletAddressDocument(
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+				"https://"+r.Host+r.URL.Path,
+			))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

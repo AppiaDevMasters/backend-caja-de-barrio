@@ -82,7 +82,7 @@ services:
       ILP_CONNECTOR_URL: ${ILP_CONNECTOR_URL:-http://rafiki-backend:3002}
       AUTH_SERVER_GRANT_URL: http://rafiki-auth:3006
       AUTH_SERVER_INTROSPECTION_URL: http://rafiki-auth:3007
-      AUTH_SERVICE_API_URL: http://rafiki-auth:3011
+      AUTH_SERVICE_API_URL: http://rafiki-auth:3009
       # Clave Ed25519 del ASE. Si no se fija PRIVATE_KEY_FILE, Rafiki genera una
       # clave efimera en memoria y la pierde en cada reinicio.
       KEY_ID: ${KEY_ID:?}
@@ -125,7 +125,7 @@ services:
       - '${AUTH_PORT:-3006}:3006' # Open Payments authorization server
       - '${INTROSPECTION_PORT:-3007}:3007' # Introspeccion de access tokens
       - '${INTERACTION_PORT:-3009}:3009' # Interaccion del usuario (grant interactivo)
-      - '${AUTH_SERVICE_API_PORT:-3011}:3011' # API servicio a servicio
+      - '${AUTH_SERVICE_API_PORT:-3011}:3011' # API servicio a servicio del auth server
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
@@ -214,7 +214,15 @@ services:
       # el redirect con el que el navegador cierra la interaccion.
       RAFIKI_AUTH_SERVER_URL: http://rafiki-auth:3006
       RAFIKI_AUTH_SERVER_PUBLIC_URL: ${AUTH_SERVER_URL:?}
-      OP_KEY_ID: ${KEY_ID:-}
+      # La Servidor de interaccion del auth server, que es donde el IdP lee y resuelve la
+      # interaccion: /grant/{id}/{nonce}. NO es la ruta del navegador
+      # (/interact/{id}/{nonce} en el puerto 3006), y llamar a esa daba 404.
+      RAFIKI_INTERACTION_SERVER_URL: http://rafiki-auth:3009
+      # OJO: aca NO se pasa KEY_ID. Ese es el kid de la clave del ASE de Rafiki, que no
+      # tiene nada que ver con la clave de NUESTRO cliente. El cliente se nombra con la
+      # huella RFC 7638 de su propia clave, que es lo que el seed registra en la wallet
+      # address; con KEY_ID el servidor de autorizacion bajaba nuestro JWKS, no encontraba
+      # ese kid y respondia 400 "could not determine client".
       OP_PRIVATE_KEY_PATH: /home/backend/keys/op-private-key.pem
     volumes:
       # La MISMA clave que registro el seed: si el contenedor generara otra, el JWK

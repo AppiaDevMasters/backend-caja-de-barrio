@@ -12,7 +12,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/backend ./cmd/backend
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/backend ./cmd/backend && \
+    CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/retiro ./cmd/retiro
 
 FROM alpine:3.20
 # El proceso corre sin privilegios con el uid 1000, el mismo dueno de ./keys en el
@@ -21,5 +22,9 @@ RUN adduser -D -u 1000 -h /home/backend backend
 USER backend
 WORKDIR /home/backend
 COPY --from=build /out/backend /usr/local/bin/backend
+# El conductor del retiro viaja en la misma imagen porque tiene que correr DENTRO de la
+# red: las wallet addresses y el servidor de autorizacion se anuncian por nombre de
+# servicio, y un contenedor no alcanza los puertos publicados del host.
+COPY --from=build /out/retiro /usr/local/bin/retiro
 EXPOSE 8000
 ENTRYPOINT ["backend"]

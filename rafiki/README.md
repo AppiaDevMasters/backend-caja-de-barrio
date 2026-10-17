@@ -127,7 +127,7 @@ verificada contra los `os.Getenv` del código, y los nombres con valores de ejem
 | `RAFIKI_ADMIN_API_SECRET` | `.env` (`ADMIN_API_SECRET`) | Firma las llamadas a la Admin API. |
 | `RAFIKI_SIGNATURE_SECRET` | `.env` (`SIGNATURE_SECRET`) | Verifica la firma de los webhooks. |
 | `RAFIKI_IDENTITY_SERVER_SECRET` | `.env` (`IDENTITY_SERVER_SECRET`) | Secreto compartido con el IdP. |
-| `OP_KEY_ID`, `OP_PRIVATE_KEY_PATH` | `.env` (`KEY_ID`) | Identidad Open Payments del backend; la clave privada se monta desde `../keys`. |
+| `OP_PRIVATE_KEY_PATH` | compose | Clave privada del cliente Open Payments de este backend, montada desde `../keys`. **`OP_KEY_ID` no se pasa a proposito**: vacio, el cliente se nombra con la huella RFC 7638 de su propia clave, que es lo que el seed registra. El `KEY_ID` de `.env` es la clave del ASE **de Rafiki** y no la nuestra, y al pasarlo el servidor de autorizacion contestaba `400 could not determine client`. |
 
 Fuera de Docker, `cmd/backend` y `cmd/seed` leen las mismas variables del entorno del
 proceso: exportalas desde `.env` mapeando los cuatro nombres que difieren.

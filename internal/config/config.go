@@ -103,6 +103,13 @@ type Rafiki struct {
 	// host's published ports.
 	AuthServerURL string
 
+	// InteractionServerURL is the interaction server of the authorization server
+	// (http://rafiki-auth:3009), which is where the identity provider reads and
+	// resolves an interaction: /grant/{id}/{nonce}. It is NOT the address a browser
+	// opens, which is /interact/{id}/{nonce} on the interaction server, and calling
+	// that one from the IdP answered 404.
+	InteractionServerURL string
+
 	// AuthServerPublicURL is the address the user's browser opens for an
 	// interactive grant (the AUTH_SERVER_URL of rafiki/.env).
 	AuthServerPublicURL string
@@ -138,6 +145,7 @@ func Load() (Config, error) {
 		IdentityServerSecret: strings.TrimSpace(os.Getenv("RAFIKI_IDENTITY_SERVER_SECRET")),
 		AuthServerURL:        strings.TrimSpace(os.Getenv("RAFIKI_AUTH_SERVER_URL")),
 		AuthServerPublicURL:  strings.TrimSpace(os.Getenv("RAFIKI_AUTH_SERVER_PUBLIC_URL")),
+		InteractionServerURL: strings.TrimSpace(os.Getenv("RAFIKI_INTERACTION_SERVER_URL")),
 	}
 
 	// The wallet address of the client is the published base plus the application's

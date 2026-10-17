@@ -45,6 +45,12 @@ type Config struct {
 	// not the address a browser opens.
 	AuthServerURL string
 
+	// InteractionServerURL is the interaction server of the authorization server
+	// (rafiki-auth:3009), which is where the IdP reads and resolves an interaction:
+	// /grant/{id}/{nonce}. It is a different address AND a different path than the
+	// browser's /interact/{id}/{nonce}, and calling that one returned 404.
+	InteractionServerURL string
+
 	// AuthServerPublicURL is the address of that same server a browser can open. It
 	// is only used for the redirect that finishes the interaction. Empty means
 	// AuthServerURL, which is what a backend running on the host wants.

@@ -31,7 +31,8 @@ todavía no existen. El detalle está en
 | `cmd/seed` — activo COP y USD, liquidez, cinco wallet addresses y el JWK del cliente | Listo e idempotente, **verificado en vivo** |
 | `internal/rafikiadmin` — cliente de la Admin API (firma HMAC, GraphQL) | Listo |
 | `internal/opkeys` — clave Ed25519 del cliente y su `kid` (huella RFC 7638) | Listo |
-| `internal/opclient` — el flujo del retiro con el SDK oficial de Go | Listo y con **92 pruebas**; **nunca ejecutado contra Rafiki** |
+| `internal/opclient` — el flujo del retiro con el SDK oficial de Go | Listo, con **92 pruebas**, y **ejercitado contra el Rafiki local** desde `cmd/retiro` |
+| `cmd/retiro` — un retiro completo contra el stack, para ver el dinero moverse | Los pasos 1 a 4 verificados **en vivo**; los 5 a 7 en verificación (ver [Cómo hacer un intercambio](#cómo-hacer-un-intercambio)) |
 | `internal/store` — conexión, migraciones y las 11 tablas del contrato (PostGIS) | Listo y **verificado contra un PostGIS real** |
 | `internal/caja` — las reglas de dinero (comisión, topes, niveles) | Listo, anclado en el ejemplo del contrato |
 | `internal/mapa` — cercanas por distancia, detalle y efectivo del día | Rutas y consultas listas, probadas; **no montadas en el stack** |
@@ -225,20 +226,60 @@ docker compose down --volumes     # borra Postgres; después: ./scripts/init.sh 
 
 ## Cómo hacer un intercambio
 
-**Hoy no se puede hacer una transferencia de punta a punta, y conviene que el README lo
-diga en vez de dejar que alguien lo intente y falle.** Faltan tres cosas, y ninguna es de
-Rafiki:
+**El comando existe y conduce el retiro completo contra el Rafiki local:**
 
-| Lo que falta | Por qué |
+```bash
+cd rafiki
+docker compose exec -T backend retiro               # 10.000 COP, el monto de la prueba del contrato
+docker compose exec -T backend retiro -monto 25000  # otro monto, en pesos enteros
+```
+
+Corre **dentro de la red de compose** porque no hay alternativa: las wallet addresses y el
+servidor de autorización se anuncian por **nombre de servicio** (`rafiki-backend:3000`,
+`rafiki-auth:3006`) y un contenedor no alcanza los puertos publicados del host. Por eso el
+conductor viaja como segundo binario en la imagen del backend.
+
+Qué hace, imprimiendo cada paso: los **dos cobros** (la tienda por el monto más su comisión y la
+plataforma por el 1%), las **dos cotizaciones** desde la billetera de la clienta, el **grant
+interactivo** con el techo del cupo, la **aprobación** por la pantalla de consentimiento de este
+mismo backend —sin billetera externa ni navegador: en el stack local la "billetera" del cliente
+es nuestro propio ASE—, la **verificación del hash** del callback, los **dos pagos** rotando el
+token después de cada uso, y la **comprobación de que el dinero llegó** al cobro de la tienda.
+
+Los montos salen de las **reglas de dinero del producto** (`internal/caja`), no de números
+inventados: un retiro de 10.000 con los 800.000 libres del ejemplo del contrato dan **1.000 de
+comisión del tendero** (el piso) y **100 de la plataforma**.
+
+### Hasta dónde está verificado
+
+**Los pasos 1 a 4 están verificados en vivo** contra Rafiki: los dos cobros, las dos cotizaciones,
+el grant interactivo y la aprobación con su **hash verificado**. Los pasos **5 a 7** quedaron en
+verificación al cerrar esta edición, por dos defectos ya corregidos cuya corrida es la que falta:
+el **host público** con el que el servidor de autorización anuncia su `continue` y la gestión del
+token (inalcanzable desde dentro de la red) y el **`wait` de GNAP**, la pausa obligatoria antes de
+continuar un grant (`WAIT_SECONDS`, cinco por defecto, y el servidor contesta `400 continued grant
+faster than "wait" period` si se adelanta). El SDK no expone ese valor, así que hay que esperarlo.
+
+**Siete defectos reales encontró esta iteración**, todos en las **costuras** entre piezas y ninguno
+visible con pruebas contra dobles. Los tres primeros son los que más vale la pena conocer:
+
+| Defecto | Causa |
 | --- | --- |
-| **Las rutas de pagos** `/internal/pagos/*` (tareas C13 y C14) | Nada puede disparar el flujo del cliente: `internal/opclient` está escrito y probado, pero **no tiene quién lo llame** |
-| **El servicio `db` con PostGIS en el compose** (C16) | La capa de datos no tiene base en el stack, y la superficie interna no se monta sin `DATABASE_URL` |
-| **La corrida viva** (C19) | El flujo del dinero **nunca se ejecutó contra Rafiki**: sus 92 pruebas corren contra servidores de prueba, no contra el stack |
+| `400 could not determine client` | El compose le pasaba a nuestro cliente el `KEY_ID` de Rafiki como si fuera su `kid` |
+| `401 firma inválida` | Las llamadas se construían sobre la URL de la wallet (`https`) y no sobre el `resourceServer` (`http`): **la firma cubre el target URI** |
+| `502` en la pantalla de consentimiento | El IdP leía la interacción en la ruta del **navegador** (`/interact/...`) y no en el **servidor de interacción** (`/grant/{id}/{nonce}`, puerto 3009) |
+| `401 invalid session` al aprobar | La parte interactiva es una **sesión con cookie** y el conductor no tenía jarra |
+| El hash no verificaba | Se calculaba con el `authServer` del documento, y no con la URL **configurada** del servidor de autorización **más el tenant** |
+| `i/o timeout` al continuar | El `continue` y la gestión del token llegan con el **host público** de la demo |
+| `400 continued grant faster than "wait" period` | GNAP obliga a esperar el **`wait`** del grant antes de continuarlo, y el SDK no expone ese valor |
 
-También falta `POST /caja/reservas` (C10), que es la reserva que el pago paga: su capa de
-datos ya está y la elegibilidad de la persona también, pero la ruta todavía no existe.
+Y lo que **todavía no** se puede: que el **agente** pida un retiro. Para eso faltan las rutas
+`/internal/pagos/*` (C13 y C14), el servicio `db` con PostGIS en el compose (C16) y
+`POST /caja/reservas` (C10).
 
-### Lo que sí se puede hacer hoy
+### Cómo será un intercambio pedido por el agente
+
+Cuando esas rutas existan, el flujo del agente son **ocho pasos**:
 
 **Ver que el ASE funciona**: los tres endpoints que Rafiki llama de vuelta (los comandos
 del paso 5). Eso está corriendo y verificado.
@@ -319,6 +360,7 @@ wallet addresses del mismo ASE no necesitan peer.
 | `cmd/backend` | El proceso: carga la configuración, migra, monta las rutas y sirve |
 | `cmd/migrate` | Aplica las migraciones del esquema y sale (el backend también migra al arrancar) |
 | `cmd/seed` | Aprovisiona el ASE: activos, liquidez, wallet addresses y el JWK del cliente |
+| `cmd/retiro` | Un retiro completo contra el stack local: cobros, cotizaciones, grant, aprobación, pagos y comprobación |
 | `internal/api` | La superficie `/internal`: el router, el chequeo de `X-Servicio-Token` y el sobre de errores |
 | `internal/ase` | Los endpoints que Rafiki y el servidor de autorización llaman de vuelta |
 | `internal/caja` | Las reglas de dinero: comisión del tendero, comisión de la plataforma, topes y niveles |

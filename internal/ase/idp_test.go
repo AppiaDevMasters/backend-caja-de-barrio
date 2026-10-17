@@ -39,7 +39,9 @@ func interactionStub(t *testing.T, detailsCode, choiceCode int) (*httptest.Serve
 		calls = append(calls, authCall{Method: r.Method, Path: r.URL.Path, IDPSecret: r.Header.Get("x-idp-secret")})
 		mu.Unlock()
 
-		if strings.HasSuffix(r.URL.Path, "/details") {
+		// The BACK-CHANNEL API of the authorization server, /grant/{id}/{nonce}: reading the
+		// grant is a GET and resolving the choice is a POST.
+		if r.Method == http.MethodGet {
 			w.WriteHeader(detailsCode)
 			if detailsCode == http.StatusOK {
 				w.Write([]byte(testDetailsBody))
@@ -68,6 +70,9 @@ func newIdPHandler(t *testing.T, authServerURL string) http.Handler {
 		IdentityServerSecret: testIdPSecret,
 		AuthServerURL:        authServerURL,
 		AuthServerPublicURL:  testAuthServerPublic,
+		// The IdP reads and resolves the interaction on the interaction server: the same stub
+		// plays both addresses here.
+		InteractionServerURL: authServerURL,
 		Now:                  func() time.Time { return pinned },
 	})
 	if err != nil {
@@ -126,8 +131,8 @@ func TestIdPPageShowsWhatTheClientAsksFor(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("the authorization server received %d calls, want 1: %+v", len(got), got)
 	}
-	if got[0].Method != http.MethodGet || got[0].Path != "/interact/i-1/n-1/details" {
-		t.Errorf("call = %s %s, want GET /interact/i-1/n-1/details", got[0].Method, got[0].Path)
+	if got[0].Method != http.MethodGet || got[0].Path != "/grant/i-1/n-1" {
+		t.Errorf("call = %s %s, want GET /grant/i-1/n-1 (la servidor de interaccion, no la ruta del navegador)", got[0].Method, got[0].Path)
 	}
 	if got[0].IDPSecret != testIdPSecret {
 		t.Errorf("x-idp-secret = %q, want the identity server secret", got[0].IDPSecret)
@@ -184,7 +189,7 @@ func TestIdPPageWithoutAnAuthServerIsUnavailable(t *testing.T) {
 // browser to finish the interaction there: the hash of the callback is the
 // authorization server's, not the IdP's.
 func TestIdPChoiceAsksTheAuthServerAndSendsTheBrowserToFinish(t *testing.T) {
-	tests := map[string]string{"accept": "/interact/i-1/n-1/accept", "reject": "/interact/i-1/n-1/reject"}
+	tests := map[string]string{"accept": "/grant/i-1/n-1/accept", "reject": "/grant/i-1/n-1/reject"}
 
 	for choice, wantPath := range tests {
 		t.Run(choice, func(t *testing.T) {
@@ -227,6 +232,9 @@ func TestIdPChoiceRedirectsToThePublicAuthServerByDefault(t *testing.T) {
 		SignatureSecret:      testSecret,
 		IdentityServerSecret: testIdPSecret,
 		AuthServerURL:        authServer.URL,
+		// The IdP reads and resolves the interaction on the interaction server, which is a
+		// different address than the browser's.
+		InteractionServerURL: authServer.URL,
 		Now:                  func() time.Time { return pinned },
 	})
 	if err != nil {

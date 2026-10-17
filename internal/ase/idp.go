@@ -61,7 +61,7 @@ func (s *Server) handleIDPPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the interaction id and nonce are required", http.StatusBadRequest)
 		return
 	}
-	if s.cfg.AuthServerURL == "" {
+	if s.cfg.InteractionServerURL == "" || s.cfg.AuthServerURL == "" {
 		s.logger.Error("the identity provider has no authorization server to talk to")
 		http.Error(w, "the identity provider is not configured", http.StatusServiceUnavailable)
 		return
@@ -115,7 +115,7 @@ func (s *Server) handleIDPChoice(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the choice is not accept or reject", http.StatusBadRequest)
 		return
 	}
-	if s.cfg.AuthServerURL == "" {
+	if s.cfg.InteractionServerURL == "" || s.cfg.AuthServerURL == "" {
 		s.logger.Error("the identity provider has no authorization server to talk to")
 		http.Error(w, "the identity provider is not configured", http.StatusServiceUnavailable)
 		return
@@ -132,7 +132,7 @@ func (s *Server) handleIDPChoice(w http.ResponseWriter, r *http.Request) {
 
 // interactionDetails reads the grant the interaction belongs to, server to server.
 func (s *Server) interactionDetails(ctx context.Context, interactID, nonce string) (interactionDetails, error) {
-	endpoint := s.interactionURL(interactID, nonce) + "/details"
+	endpoint := s.interactionURL(interactID, nonce)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -184,11 +184,16 @@ func (s *Server) interactionChoice(ctx context.Context, interactID, nonce, choic
 	return nil
 }
 
-// interactionURL is the authorization server endpoint of one interaction, as the
-// IdP reaches it server to server.
+// interactionURL is the BACK-CHANNEL endpoint of one interaction, as the IdP reaches it
+// server to server: the interaction server of the authorization server, which is the one that
+// reads grant information and resolves a choice.
+//
+// It is NOT the front-channel path a browser opens (/interact/{id}/{nonce} on the
+// interaction server). The IdP used to call that one, and the authorization server
+// answered 404, which the page turned into a 502.
 func (s *Server) interactionURL(interactID, nonce string) string {
-	return strings.TrimSuffix(s.cfg.AuthServerURL, "/") +
-		"/interact/" + url.PathEscape(interactID) + "/" + url.PathEscape(nonce)
+	return strings.TrimSuffix(s.cfg.InteractionServerURL, "/") +
+		"/grant/" + url.PathEscape(interactID) + "/" + url.PathEscape(nonce)
 }
 
 // finishInteractionURL is where the browser continues after choosing: the
