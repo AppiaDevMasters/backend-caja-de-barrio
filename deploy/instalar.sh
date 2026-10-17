@@ -76,7 +76,6 @@ hash_admin="$(docker run --rm caddy:2.8-alpine caddy hash-password --plaintext "
 # tiene esa clave y los MCP ya tienen ese token).
 db_password="$(env_val CAJA_DB_PASSWORD)"; db_password="${db_password:-$(openssl rand -hex 24)}"
 servicio_token="$(env_val SERVICIO_TOKEN)"; servicio_token="${servicio_token:-$(openssl rand -hex 32)}"
-verifik_token="${VERIFIK_TOKEN:-$(env_val VERIFIK_TOKEN)}"
 
 # Bloque del VPS al final de rafiki/.env, reescrito en cada corrida. El hash va entre
 # comillas simples para que Compose no interprete sus `$`.
@@ -88,8 +87,17 @@ ADMIN_UI_USUARIO=admin
 ADMIN_UI_HASH='$hash_admin'
 CAJA_DB_PASSWORD=$db_password
 SERVICIO_TOKEN=$servicio_token
-VERIFIK_TOKEN=$verifik_token
 EOF
+
+paso "Llaves de proveedores (deploy/llaves.env)"
+if [ ! -f deploy/llaves.env ]; then
+  install -m 600 deploy/llaves.env.example deploy/llaves.env
+  echo "Se creó deploy/llaves.env vacío: llena Verifik y Didit y vuelve a correr este script."
+fi
+chmod 600 deploy/llaves.env
+for llave in VERIFIK_TOKEN DIDIT_API_KEY DIDIT_WORKFLOW_ID DIDIT_WEBHOOK_SECRET; do
+  grep -q "^$llave=." deploy/llaves.env && echo "  $llave: puesta" || echo "  $llave: FALTA"
+done
 
 paso "Directorio de la clave del cliente Open Payments"
 mkdir -p keys

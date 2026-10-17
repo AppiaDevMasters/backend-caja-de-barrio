@@ -29,3 +29,5 @@ coverage.txt
 
 # Despliegue: usuario y clave de la UI de Rafiki que genera deploy/instalar.sh.
 deploy/.credenciales-admin
+# Llaves de proveedores en el VPS (Verifik, Didit): solo deploy/llaves.env.example se versiona.
+deploy/llaves.env

@@ -94,6 +94,11 @@ services:
 
   backend:
     ports: !reset []
+    # Llaves de proveedores (Verifik, Didit) y ajustes de la demo: deploy/llaves.env, que no se
+    # versiona. Lo crea deploy/instalar.sh desde deploy/llaves.env.example.
+    env_file:
+      - path: ../deploy/llaves.env
+        required: false
     depends_on:
       db:
         condition: service_healthy
@@ -104,9 +109,6 @@ services:
       # Superficie /internal del contrato: se monta solo con base y token.
       DATABASE_URL: postgres://caja:${CAJA_DB_PASSWORD}@db:5432/caja_de_barrio?sslmode=disable
       SERVICIO_TOKEN: ${SERVICIO_TOKEN:?falta SERVICIO_TOKEN, lo fija deploy/instalar.sh}
-      VERIFIK_TOKEN: ${VERIFIK_TOKEN:-}
-      # Avisos a las personas (decisiones del panel): el agente corre en la misma red.
-      AGENTE_URL: http://agente:8080
 
 volumes:
   caddy-data:
