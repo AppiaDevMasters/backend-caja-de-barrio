@@ -80,7 +80,7 @@ Prerrequisito: T7-T9 (cliente de Open Payments). C1 no depende de ellas y desblo
 | C14 | S10,S13 | Pagos: `POST /cobros`, `POST /cotizaciones`, `POST /aprobaciones`, `POST /pagos` y `GET /cobros/estado` | `internal/api/pagos` | — |
 | C15 | S9 | Una prueba por invariante de la seccion 9, sobre la interfaz publica y con estado aislado | `internal/api`, `internal/store` | — |
 | C16 | S3,S18 | Compose: servicio `db` PostGIS, migraciones al arrancar y variables por servicio (los MCP solo reciben `BACKEND_URL` y `SERVICIO_TOKEN`) | `rafiki/docker-compose.yml`, `Dockerfile` | 1c19d69 |
-| C17 | S17 | Documentacion: `README.md`, `docs/configuracion.md` y `env.example` con las variables nuevas (`DATABASE_URL`, `SERVICIO_TOKEN`, `VERIFIK_TOKEN`, `DIDIT_*`, `OP_WALLET_PLATAFORMA`) | raiz, `docs/` | — |
+| C17 | S17 | Documentacion: `README.md`, `docs/configuracion.md` y `env.example` con las variables nuevas (`DATABASE_URL`, `SERVICIO_TOKEN`, `VERIFIK_TOKEN`, `DIDIT_*`, `OP_WALLET_PLATAFORMA`) | raiz, `docs/` | a7acc38 |
 | C18 | — | Respuesta a la seccion 11 del contrato: URL base, tokens por canal privado, paths y campos, wallets finales, prueba minima de pago y configuracion del webhook de Didit | `docs/seccion-11.md`, `README.md` | 8caee4a |
 | C19 | S9,S10 | Verificacion de punta a punta: retiro completo con la wallet del cliente, y la lista de comprobacion de la seccion 11.4 (cliente, tienda y app; y el segundo `POST /pagos` sin segundo cobro) | raiz | — |
 
@@ -392,3 +392,5 @@ L42 (2026-10-17, trazabilidad de C16): la implementación y su documentación qu
 L43 (2026-10-17, decisión de producto para C10): para `POST /internal/caja/reservas`, cualquier persona cuyo `estado_registro` no sea `aprobada` responde con `PERSONA_NO_APROBADA` y HTTP 409. Se distingue así el registro no aprobado de una persona aprobada cuya verificación Didit está ausente o vencida (`SIN_VERIFICACION`, también 409). Esta decisión se toma porque el contrato no fija el código para `pendiente`, `rechazada` o `bloqueada` y la referencia `simuladas.py` no está disponible.
 
 L45 (2026-10-17, C18 cerrada): `docs/seccion-11.md` responde los cinco puntos de la sección 11 sin exponer secretos. Documenta `BACKEND_URL` dentro de Compose, `X-Servicio-Token` por canal privado, la separación entre la `DATABASE_URL` del contrato y la de Rafiki, las wallets seed, la evidencia real de T12 y los bloqueos honestos de C8/C10/C13/C14/C19. El documento quedó enlazado desde `README.md` y publicado en `8caee4a`; C18 queda cerrada.
+
+L46 (2026-10-17, C17 cerrada): `README.md`, `docs/configuracion.md` y `env.example` documentan `DIDIT_API_KEY`, `DIDIT_WORKFLOW_ID`, `DIDIT_WEBHOOK_SECRET` y `DIDIT_CALLBACK_URL` sin valores reales. La documentación declara explícitamente que no hay credenciales Didit disponibles y que no se ha ejecutado una llamada real; el commit de trabajo es `a7acc38`. C8 permanece pendiente de implementación/verificación del proveedor.
