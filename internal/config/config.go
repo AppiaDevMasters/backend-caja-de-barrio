@@ -67,7 +67,28 @@ type OP struct {
 	// TLS is OP_TLS: the wallet addresses and the authorization server are reached by
 	// their public https URLs, as on the VPS. Off, the local stack's http rules apply.
 	TLS bool
+
+	// Modo is OP_MODO: ModoPropio (the default) runs every wallet on this backend's own
+	// Rafiki; ModoTestnet runs the withdrawal against wallets of the Interledger testnet,
+	// with this backend only as an Open Payments client.
+	Modo string
+
+	// TestnetWalletCliente and TestnetWalletTienda are OP_TESTNET_WALLET_CLIENTE and
+	// OP_TESTNET_WALLET_TIENDA: in testnet mode they replace the stored wallet of the
+	// person and of the store, for the demo.
+	TestnetWalletCliente string
+	TestnetWalletTienda  string
+
+	// TestnetCupo is OP_TESTNET_CUPO: the ceiling of the cupo in whole units of the
+	// CLIENT's asset (for example 100 for 100 USD).
+	TestnetCupo int64
 }
+
+// The two values of OP_MODO.
+const (
+	ModoPropio  = "propio"
+	ModoTestnet = "testnet"
+)
 
 // Database holds the data layer settings: where the schema of the contract lives.
 type Database struct {
@@ -212,6 +233,24 @@ func Load() (Config, error) {
 		InteractionServerURL: strings.TrimSpace(os.Getenv("RAFIKI_INTERACTION_SERVER_URL")),
 	}
 
+	modo := strings.ToLower(defaultString(os.Getenv("OP_MODO"), ModoPropio))
+	if modo != ModoPropio && modo != ModoTestnet {
+		return Config{}, fmt.Errorf("config: OP_MODO must be %q or %q, got %q", ModoPropio, ModoTestnet, modo)
+	}
+	var cupoTestnet int64
+	if modo == ModoTestnet {
+		for _, nombre := range []string{"OP_TESTNET_WALLET_CLIENTE", "OP_TESTNET_WALLET_TIENDA", "OP_CLIENT_WALLET_ADDRESS"} {
+			if strings.TrimSpace(os.Getenv(nombre)) == "" {
+				return Config{}, fmt.Errorf("config: OP_MODO=testnet needs %s", nombre)
+			}
+		}
+		raw := strings.TrimSpace(os.Getenv("OP_TESTNET_CUPO"))
+		cupoTestnet, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || cupoTestnet <= 0 {
+			return Config{}, fmt.Errorf("config: OP_MODO=testnet needs OP_TESTNET_CUPO, a positive whole amount of the client's asset, got %q", raw)
+		}
+	}
+
 	// The wallet address of the client is the published base plus the application's
 	// account, which is the name the seed registers the key on: deriving it keeps the
 	// two from drifting apart when the base changes.
@@ -225,11 +264,15 @@ func Load() (Config, error) {
 		LogLevel: level,
 		Rafiki:   rafiki,
 		OP: OP{
-			ClientWalletAddress: clientWallet,
-			KeyID:               strings.TrimSpace(os.Getenv("OP_KEY_ID")),
-			PrivateKeyPath:      defaultString(os.Getenv("OP_PRIVATE_KEY_PATH"), DefaultOPPrivateKeyPath),
-			TLS:                 strings.EqualFold(strings.TrimSpace(os.Getenv("OP_TLS")), "true"),
-			FinishURL:           strings.TrimSpace(os.Getenv("OP_FINISH_URL")),
+			ClientWalletAddress:  clientWallet,
+			KeyID:                strings.TrimSpace(os.Getenv("OP_KEY_ID")),
+			PrivateKeyPath:       defaultString(os.Getenv("OP_PRIVATE_KEY_PATH"), DefaultOPPrivateKeyPath),
+			TLS:                  strings.EqualFold(strings.TrimSpace(os.Getenv("OP_TLS")), "true"),
+			FinishURL:            strings.TrimSpace(os.Getenv("OP_FINISH_URL")),
+			Modo:                 modo,
+			TestnetWalletCliente: strings.TrimSpace(os.Getenv("OP_TESTNET_WALLET_CLIENTE")),
+			TestnetWalletTienda:  strings.TrimSpace(os.Getenv("OP_TESTNET_WALLET_TIENDA")),
+			TestnetCupo:          cupoTestnet,
 			WalletPlataforma: defaultString(os.Getenv("OP_WALLET_PLATAFORMA"),
 				strings.TrimSuffix(rafiki.OpenPaymentsURL, "/")+"/app-cajadebarrio-cop"),
 		},

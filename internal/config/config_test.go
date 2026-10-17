@@ -128,7 +128,8 @@ func TestLoadReadsTheOpenPaymentsClientSettings(t *testing.T) {
 		t.Fatalf("Load() returned an error: %v", err)
 	}
 	want := config.OP{ClientWalletAddress: "https://ase.example:3000/laura-cajadebarrio", KeyID: "mi-llave", PrivateKeyPath: "/ruta/clave.pem",
-		FinishURL: "https://agente.example/op/finish", WalletPlataforma: "https://ase.example:3000/app-cajadebarrio-cop", TLS: true}
+		FinishURL: "https://agente.example/op/finish", WalletPlataforma: "https://ase.example:3000/app-cajadebarrio-cop", TLS: true,
+		Modo: config.ModoPropio}
 	if cfg.OP != want {
 		t.Errorf("OP = %+v, want %+v", cfg.OP, want)
 	}
@@ -198,5 +199,37 @@ func TestLoadReadsTheTwoAuthServerURLs(t *testing.T) {
 	}
 	if cfg.Rafiki.AuthServerPublicURL != "http://100.76.141.47:3006" {
 		t.Errorf("AuthServerPublicURL = %q, want the address the browser opens", cfg.Rafiki.AuthServerPublicURL)
+	}
+}
+
+func TestOPModoPorDefectoEsPropioYTestnetExigeSusVariables(t *testing.T) {
+	t.Setenv("OP_MODO", "")
+	cfg, err := config.Load()
+	if err != nil || cfg.OP.Modo != config.ModoPropio {
+		t.Fatalf("default mode = %q, %v", cfg.OP.Modo, err)
+	}
+
+	t.Setenv("OP_MODO", "otro")
+	if _, err := config.Load(); err == nil {
+		t.Fatal("an unknown OP_MODO must fail at start")
+	}
+
+	t.Setenv("OP_MODO", "testnet")
+	t.Setenv("OP_CLIENT_WALLET_ADDRESS", "https://ilp.interledger-test.dev/app-cajadebarrio")
+	t.Setenv("OP_TESTNET_WALLET_CLIENTE", "https://ilp.interledger-test.dev/andres-cajadebarrio")
+	t.Setenv("OP_TESTNET_WALLET_TIENDA", "")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "OP_TESTNET_WALLET_TIENDA") {
+		t.Fatalf("testnet without the store wallet = %v", err)
+	}
+	t.Setenv("OP_TESTNET_WALLET_TIENDA", "https://ilp.interledger-test.dev/laura-cajadebarrio")
+	t.Setenv("OP_TESTNET_CUPO", "0")
+	if _, err := config.Load(); err == nil {
+		t.Fatal("testnet without a positive cupo must fail")
+	}
+	t.Setenv("OP_TESTNET_CUPO", "100")
+	cfg, err = config.Load()
+	if err != nil || cfg.OP.Modo != config.ModoTestnet || cfg.OP.TestnetCupo != 100 ||
+		cfg.OP.TestnetWalletTienda != "https://ilp.interledger-test.dev/laura-cajadebarrio" {
+		t.Fatalf("testnet = %+v, %v", cfg.OP, err)
 	}
 }
