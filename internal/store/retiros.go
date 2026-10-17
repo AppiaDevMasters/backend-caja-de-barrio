@@ -316,7 +316,7 @@ func (s *Store) GuardarCupoPendiente(ctx context.Context, c CupoGrant) error {
 		set grant_id = $2, wallet_address = $3, limite = $4, moneda = $5, intervalo = $6, continue_uri = $7,
 		    continue_token = $8, nonce = $9, server_nonce = $10, auth_server = $11, access_token = null,
 		    token_manage_url = null, token_vence_en = null, aprobado_en = null, usado = 0
-		where cupos.aprobado_en is null`
+		where cupos.aprobado_en is null or cupos.wallet_address <> excluded.wallet_address`
 	tag, err := s.pool.Exec(ctx, query, c.PersonaID, c.GrantID, c.WalletAddress, c.Limite, c.Moneda, c.Intervalo,
 		c.ContinueURI, c.ContinueToken, c.ClientNonce, c.ServerNonce, c.AuthServer)
 	if err != nil {

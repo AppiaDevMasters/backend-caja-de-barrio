@@ -77,6 +77,9 @@ type Dependencias struct {
 	Billeteras     Billeteras
 	// Saldos loads the virtual wallet of an approved registration. It may be nil.
 	Saldos Saldos
+	// WalletCupo, when set, is the only wallet a cupo counts for (the testnet mode's
+	// client wallet); a cupo on any other wallet is reported as not approved.
+	WalletCupo string
 	// AltasTendero verifies the keeper of a store the panel registered. Nil answers
 	// alta_tendero as not available.
 	AltasTendero AltasTendero
@@ -84,7 +87,7 @@ type Dependencias struct {
 
 // Register adds the identity routes to the surface.
 func Register(server *api.Server, deps Dependencias) {
-	server.Handle("GET /identidad/personas", quienEscribe(deps.Datos))
+	server.Handle("GET /identidad/personas", quienEscribe(deps.Datos, deps.WalletCupo))
 	server.Handle("POST /identidad/politicas/aceptaciones", aceptarPoliticas(deps.Datos))
 	server.Handle("POST /identidad/cedulas/verificar", verificarCedula(deps.Cedulas))
 	server.Handle("POST /identidad/personas", crearPersona(deps))
@@ -135,7 +138,7 @@ type noRegistradaBody struct {
 
 // quienEscribe answers 5.1: who is writing. The same number can be a person's or a
 // storekeeper's, and a number nobody knows is answered as such instead of as an error.
-func quienEscribe(datos Datos) http.HandlerFunc {
+func quienEscribe(datos Datos, walletCupo string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		whatsapp := strings.TrimSpace(r.URL.Query().Get("whatsapp"))
 		if whatsapp == "" {
@@ -212,6 +215,11 @@ func quienEscribe(datos Datos) http.HandlerFunc {
 			api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo leer quién escribe."))
 
 			return
+		}
+		// A cupo granted on another wallet (the own ASE's, before the testnet mode) does
+		// not pay from the wallet in use: the agent has to ask for a new one.
+		if tieneCupo && walletCupo != "" && cupo.WalletAddress != walletCupo {
+			tieneCupo = false
 		}
 		if tieneCupo {
 			body.CupoAprobado = cupo.Aprobado

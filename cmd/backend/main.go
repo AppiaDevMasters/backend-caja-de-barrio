@@ -122,6 +122,9 @@ func run() error {
 			// Didit (5.5 to 5.7). Without its API key the routes stay mounted and answer
 			// that the provider is not configured.
 			deps := identidad.Dependencias{Datos: database, Cedulas: cedulas, Carteras: cliente}
+			if cfg.OP.Modo == config.ModoTestnet {
+				deps.WalletCupo = cfg.OP.TestnetWalletCliente
+			}
 			if cfg.Didit.APIKey != "" {
 				// The webhook route never trusts the body (it reads the decision back from
 				// the provider), so the secret is optional here; the client only refuses an

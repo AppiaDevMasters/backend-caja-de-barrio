@@ -335,7 +335,7 @@ func pagar(deps Dependencias) http.HandlerFunc {
 		case reserva.QuoteVenceEn != nil && ahora.After(*reserva.QuoteVenceEn):
 			api.Fail(w, api.Errorf(api.CodeCotizacionVencida, "La cotización venció; hay que cotizar de nuevo."))
 			return
-		case !tieneCupo || cupo.AprobadoEn == nil || cupo.AccessToken == "":
+		case !tieneCupo || cupo.AprobadoEn == nil || cupo.AccessToken == "" || !mismaWallet(cupo.WalletAddress, reserva.WalletCliente):
 			api.Fail(w, api.Errorf(api.CodeSinCupo, "La persona no ha aprobado su cupo en la billetera."))
 			return
 		case cupo.Usado+*reserva.Debito > cupo.Limite+1e-9:

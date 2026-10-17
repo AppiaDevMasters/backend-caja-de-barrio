@@ -4,10 +4,14 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/opclient"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/pagos"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/store"
 )
+
+var ahoraFijo = time.Now()
 
 const (
 	andres = "https://ilp.interledger-test.dev/andres-cajadebarrio"
@@ -103,5 +107,20 @@ func TestEnTestnetSinFondosElPagoFallaConUnMensajeClaro(t *testing.T) {
 	}
 	if e.datos.reserva.Estado != "reservada" {
 		t.Fatalf("a failed payment leaves the reservation open, got %s", e.datos.reserva.Estado)
+	}
+}
+
+func TestUnCupoDelModoPropioNoSirveEnElTestnet(t *testing.T) {
+	e := nuevoEscenarioCon(t, modoTestnet)
+	// Cristian approved her cupo on the own ASE's wallet before the testnet mode.
+	e.datos.cupo = &store.CupoGrant{PersonaID: "per_cristian", GrantID: "gra_propio", WalletAddress: walletCristian,
+		Limite: 1_000_000, Moneda: "COP", AccessToken: "sellado", AprobadoEn: &ahoraFijo}
+
+	status, body := e.pedir(t, http.MethodPost, "/pagos/cupos", `{"persona_id":"per_cristian"}`)
+	if status != http.StatusCreated || body["redirect_url"] == nil || body["limite"] != float64(100) {
+		t.Fatalf("the testnet must ask for a new cupo on its wallet: %d %v", status, body)
+	}
+	if e.datos.cupo.WalletAddress != andres || e.datos.cupo.GrantID == "gra_propio" {
+		t.Fatalf("the own cupo must be replaced: %+v", e.datos.cupo)
 	}
 }

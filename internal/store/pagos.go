@@ -19,12 +19,14 @@ type Cupo struct {
 	Limite   float64
 	Usado    float64
 	Moneda   string
+	// WalletAddress is the wallet the grant was asked on: a cupo serves that wallet only.
+	WalletAddress string
 }
 
 // CupoDe returns the cupo of one person and says whether she has one.
 func (s *Store) CupoDe(ctx context.Context, personaID string) (Cupo, bool, error) {
 	const query = `
-		select limite, usado, moneda, aprobado_en
+		select limite, usado, moneda, aprobado_en, wallet_address
 		from cupos
 		where persona_id = $1`
 
@@ -32,7 +34,7 @@ func (s *Store) CupoDe(ctx context.Context, personaID string) (Cupo, bool, error
 		cupo       Cupo
 		aprobadoEn *string
 	)
-	err := s.pool.QueryRow(ctx, query, personaID).Scan(&cupo.Limite, &cupo.Usado, &cupo.Moneda, &aprobadoEn)
+	err := s.pool.QueryRow(ctx, query, personaID).Scan(&cupo.Limite, &cupo.Usado, &cupo.Moneda, &aprobadoEn, &cupo.WalletAddress)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Cupo{}, false, nil
 	}

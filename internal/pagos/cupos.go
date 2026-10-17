@@ -87,7 +87,7 @@ func pedirCupo(deps Dependencias) http.HandlerFunc {
 			api.Fail(w, err)
 
 			return
-		} else if tiene && cupo.AprobadoEn != nil {
+		} else if tiene && cupo.AprobadoEn != nil && mismaWallet(cupo.WalletAddress, wallet) {
 			api.JSON(w, http.StatusOK, map[string]any{
 				"grant_id": cupo.GrantID, "redirect_url": nil, "ya_aprobado": true,
 				"limite": cupo.Limite, "moneda": cupo.Moneda, "intervalo": "P7D",
