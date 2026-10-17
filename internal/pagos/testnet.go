@@ -3,6 +3,8 @@ package pagos
 import (
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/api"
@@ -105,4 +107,64 @@ func pagarTestnet(w http.ResponseWriter, r *http.Request, deps Dependencias, res
 		resultado = final
 	}
 	api.JSON(w, http.StatusOK, resultado)
+}
+
+// saldoTestnet answers GET /pagos/saldo in testnet mode. The money is in a wallet of
+// another ASE, and Open Payments gives a client app no way to read a balance: only the
+// wallet's own provider sees it. So the answer says where the money is, says why its
+// balance is not shown, and lists what Caja de Barrio does know: the withdrawals paid
+// (in the client's asset) or collected (in pesos) through that wallet.
+func saldoTestnet(w http.ResponseWriter, r *http.Request, deps Dependencias, whatsapp string) {
+	prefijo := ""
+	if u, err := url.Parse(deps.Config.WalletClienteTestnet); err == nil {
+		prefijo = u.Scheme + "://" + u.Host + "/"
+	}
+	tipo, pagos, err := deps.Datos.PagosExternosDe(r.Context(), whatsapp, prefijo)
+	if err != nil {
+		api.Fail(w, err)
+
+		return
+	}
+	if tipo == "" {
+		api.Fail(w, api.Errorf(api.CodeNoEncontrado, "Ese número todavía no tiene billetera: primero debe registrarse."))
+
+		return
+	}
+
+	wallet := deps.Config.WalletClienteTestnet
+	if tipo == "tienda" {
+		wallet = deps.Config.WalletTiendaTestnet
+	}
+	moneda := ""
+	if documento, err := deps.OpenPayments.ResolveWalletAddress(r.Context(), wallet); err == nil {
+		moneda = documento.AssetCode
+	} else {
+		slog.Warn("pagos: resolving the testnet wallet for its balance answer", "error", err)
+	}
+	direccion := "$" + strings.TrimPrefix(wallet, "https://")
+
+	aviso := "Pagas desde tu billetera en " + moneda + " (" + direccion + "). Por privacidad, Open Payments no deja " +
+		"que una app vea el saldo de tu billetera: lo ves en tu propia billetera. Antes de cada retiro te mostramos " +
+		"cuánto se debita en " + moneda + " y solo se paga si escribes APROBAR."
+	movimientos := []map[string]any{}
+	for _, p := range pagos {
+		if tipo == "tienda" {
+			movimientos = append(movimientos, map[string]any{"tipo": "cobro_retiro", "monto": p.RecibidoCOP, "moneda": "COP",
+				"cliente": p.Cliente, "reserva_id": p.ReservaID, "en": p.En})
+
+			continue
+		}
+		movimientos = append(movimientos, map[string]any{"tipo": "pago_retiro", "monto": -p.Debito, "moneda": p.Moneda,
+			"recibido_cop": p.RecibidoCOP, "tienda": p.Tienda, "reserva_id": p.ReservaID, "en": p.En})
+	}
+	if tipo == "tienda" {
+		aviso = "Tus cobros llegan a tu billetera en " + moneda + " (" + direccion + "). Por privacidad, Open Payments " +
+			"no deja que una app vea el saldo de tu billetera: lo ves en tu propia billetera. Aquí están los retiros " +
+			"que cobraste por Caja de Barrio."
+	}
+
+	api.JSON(w, http.StatusOK, map[string]any{
+		"modo": "testnet", "wallet_address": direccion, "moneda": moneda,
+		"saldo": nil, "saldo_visible": false, "aviso": aviso, "movimientos": movimientos,
+	})
 }

@@ -26,16 +26,27 @@ const (
 )
 
 type memoria struct {
-	reserva      store.ReservaRetiro
-	persona      store.Persona
-	cupo         *store.CupoGrant
-	aprobaciones map[string]bool
-	movimientos  map[string]int64
-	pagados      int
+	reserva        store.ReservaRetiro
+	persona        store.Persona
+	cupo           *store.CupoGrant
+	aprobaciones   map[string]bool
+	movimientos    map[string]int64
+	pagados        int
+	prefijoExterno string
 }
 
 func (m *memoria) BilleteraDe(context.Context, string) (store.Billetera, bool, error) {
 	return store.Billetera{}, false, nil
+}
+func (m *memoria) PagosExternosDe(_ context.Context, whatsapp, prefijo string) (string, []store.PagoExterno, error) {
+	m.prefijoExterno = prefijo
+	switch whatsapp {
+	case "573001112233":
+		return "tienda", []store.PagoExterno{{ReservaID: "res_1", RecibidoCOP: 203_600, Cliente: "Cristian"}}, nil
+	case "573506477716":
+		return "persona", []store.PagoExterno{{ReservaID: "res_1", Debito: 52.14, Moneda: "USD", RecibidoCOP: 203_600, Tienda: "Tienda de Magno"}}, nil
+	}
+	return "", nil, nil
 }
 func (m *memoria) MovimientosDe(_ context.Context, wallet string) (store.Billetera, error) {
 	var saldo int64

@@ -124,3 +124,31 @@ func TestUnCupoDelModoPropioNoSirveEnElTestnet(t *testing.T) {
 		t.Fatalf("the own cupo must be replaced: %+v", e.datos.cupo)
 	}
 }
+
+func TestElSaldoEnTestnetDiceDondeEstaLaPlataYNoInventaUnSaldo(t *testing.T) {
+	e := nuevoEscenarioCon(t, modoTestnet)
+
+	_, body := e.pedir(t, http.MethodGet, "/pagos/saldo?whatsapp=573506477716", "")
+	if body["saldo"] != nil || body["saldo_visible"] != false || body["wallet_address"] != "$ilp.interledger-test.dev/andres-cajadebarrio" {
+		t.Fatalf("the client's testnet balance answer = %v", body)
+	}
+	if !strings.Contains(body["aviso"].(string), "privacidad") {
+		t.Fatalf("the answer must say why the balance is not shown: %v", body["aviso"])
+	}
+	movimiento := body["movimientos"].([]any)[0].(map[string]any)
+	if movimiento["monto"] != -52.14 || movimiento["moneda"] != "USD" || movimiento["recibido_cop"] != float64(203_600) {
+		t.Fatalf("the client sees her debit in USD: %v", movimiento)
+	}
+	if e.datos.prefijoExterno != "https://ilp.interledger-test.dev/" {
+		t.Fatalf("only the testnet's payments count: %q", e.datos.prefijoExterno)
+	}
+
+	_, body = e.pedir(t, http.MethodGet, "/pagos/saldo?whatsapp=573001112233", "")
+	if body["wallet_address"] != "$ilp.interledger-test.dev/laura-cajadebarrio" ||
+		body["movimientos"].([]any)[0].(map[string]any)["monto"] != float64(203_600) {
+		t.Fatalf("the storekeeper's testnet balance answer = %v", body)
+	}
+	if status, _ := e.pedir(t, http.MethodGet, "/pagos/saldo?whatsapp=570000000000", ""); status != http.StatusNotFound {
+		t.Fatalf("an unknown number = %d", status)
+	}
+}
