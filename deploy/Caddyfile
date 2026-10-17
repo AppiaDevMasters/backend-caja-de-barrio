@@ -25,7 +25,7 @@ backend.{$DOMINIO} {
 # públicos porque los llaman Meta, Didit y el navegador de la persona; /internal/avisos exige su token.
 agente.{$DOMINIO} {
 	encode gzip
-	@publico path /webhook/* /op/finish* /politicas /internal/avisos /health
+	@publico path /webhook/* /didit/* /op/finish* /politicas /internal/avisos /health
 	handle @publico {
 		reverse_proxy agente:8080
 	}
