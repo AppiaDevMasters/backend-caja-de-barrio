@@ -132,6 +132,7 @@ func run() error {
 				}
 				deps.Didit = diditCliente
 				deps.Verificaciones = database
+				deps.AltasTendero = database
 				deps.ConfigDidit = identidad.ConfigDidit{
 					WorkflowRegistro:   cfg.Didit.WorkflowID,
 					WorkflowBiometrico: cfg.Didit.BiometricWorkflowID,
