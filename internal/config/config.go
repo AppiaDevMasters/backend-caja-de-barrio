@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -100,6 +101,10 @@ type Didit struct {
 	// CallbackURL is DIDIT_CALLBACK_URL: where the person's browser goes back to
 	// when the hosted flow ends. The session id is appended as ?session_id=.
 	CallbackURL string
+
+	// SaldoInicialDemo is SALDO_INICIAL_DEMO_COP: what the virtual wallet of a person
+	// receives when the registration is approved. Zero loads nothing.
+	SaldoInicialDemo int64
 }
 
 // Rafiki holds the ASE side of the settings: the Admin API, the public base of
@@ -161,6 +166,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	var saldoInicial int64
+	if raw := strings.TrimSpace(os.Getenv("SALDO_INICIAL_DEMO_COP")); raw != "" {
+		saldoInicial, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || saldoInicial < 0 {
+			return Config{}, fmt.Errorf("config: SALDO_INICIAL_DEMO_COP must be a whole number of pesos, got %q", raw)
+		}
+	}
+
 	rafiki := Rafiki{
 		AdminURL:             defaultString(os.Getenv("RAFIKI_ADMIN_URL"), DefaultRafikiAdminURL),
 		OpenPaymentsURL:      defaultString(os.Getenv("RAFIKI_OPEN_PAYMENTS_URL"), DefaultOpenPaymentsURL),
@@ -205,6 +218,7 @@ func Load() (Config, error) {
 			BiometricWorkflowID: strings.TrimSpace(os.Getenv("DIDIT_BIOMETRIC_WORKFLOW_ID")),
 			WebhookSecret:       strings.TrimSpace(os.Getenv("DIDIT_WEBHOOK_SECRET")),
 			CallbackURL:         strings.TrimSpace(os.Getenv("DIDIT_CALLBACK_URL")),
+			SaldoInicialDemo:    saldoInicial,
 		},
 	}, nil
 }

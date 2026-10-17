@@ -21,6 +21,7 @@ import (
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/identidad"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/mapa"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/opclient"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/pagos"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/store"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/verifik"
 )
@@ -135,6 +136,7 @@ func run() error {
 					WorkflowRegistro:   cfg.Didit.WorkflowID,
 					WorkflowBiometrico: cfg.Didit.BiometricWorkflowID,
 					CallbackURL:        cfg.Didit.CallbackURL,
+					SaldoInicial:       cfg.Didit.SaldoInicialDemo,
 				}
 				if billeteras, err := nuevasBilleteras(cfg); err == nil {
 					deps.Billeteras = billeteras
@@ -143,7 +145,9 @@ func run() error {
 				}
 			}
 
+			deps.Saldos = database
 			mapa.Register(internal, database)
+			pagos.Register(internal, database)
 			identidad.Register(internal, deps)
 			cajaroutes.Register(internal, database)
 			mounts = append(mounts, internal.Register)

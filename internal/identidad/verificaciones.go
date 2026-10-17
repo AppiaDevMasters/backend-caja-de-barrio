@@ -53,6 +53,13 @@ type ConfigDidit struct {
 	WorkflowBiometrico string
 	// CallbackURL is where the browser goes back to; the session id is appended.
 	CallbackURL string
+	// SaldoInicial is what the virtual wallet receives when a registration is approved.
+	SaldoInicial int64
+}
+
+// Saldos records the movements of the virtual wallet of the demo.
+type Saldos interface {
+	RegistrarMovimiento(ctx context.Context, id, wallet, tipo string, monto int64, referencia string) error
 }
 
 type crearVerificacionBody struct {
@@ -392,6 +399,17 @@ func aplicarVeredicto(ctx context.Context, deps Dependencias, sesion store.Sesio
 
 	if err := deps.Verificaciones.CompletarRegistro(ctx, sesion.PersonaID, cedula, nombre, wallet, estado); err != nil {
 		return falla
+	}
+
+	// The demo's virtual wallet starts with its load, once per approving session.
+	if wallet != "" && deps.Saldos != nil && deps.ConfigDidit.SaldoInicial > 0 {
+		id, err := nuevoID("mov_")
+		if err == nil {
+			err = deps.Saldos.RegistrarMovimiento(ctx, id, wallet, "carga_inicial", deps.ConfigDidit.SaldoInicial, sesion.ID)
+		}
+		if err != nil {
+			slog.Error("saldos: loading the new wallet", "persona_id", sesion.PersonaID, "error", err)
+		}
 	}
 
 	return nil

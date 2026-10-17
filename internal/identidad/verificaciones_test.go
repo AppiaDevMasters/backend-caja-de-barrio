@@ -23,11 +23,12 @@ type memoria struct {
 	sesiones  map[string]store.SesionVerificacion
 	politicas map[string]bool
 	alertas   []string
+	cargas    map[string]int64
 }
 
 func nuevaMemoria() *memoria {
 	return &memoria{personas: map[string]store.Persona{}, sesiones: map[string]store.SesionVerificacion{},
-		politicas: map[string]bool{}}
+		politicas: map[string]bool{}, cargas: map[string]int64{}}
 }
 
 func (m *memoria) PersonaPorWhatsapp(_ context.Context, whatsapp string) (store.Persona, bool, error) {
@@ -116,6 +117,11 @@ func (m *memoria) CrearAlerta(_ context.Context, _, personaID, regla, _ string) 
 	return nil
 }
 
+func (m *memoria) RegistrarMovimiento(_ context.Context, _, wallet, tipo string, monto int64, referencia string) error {
+	m.cargas[wallet+"|"+tipo+"|"+referencia] = monto
+	return nil
+}
+
 // diditFalso records the sessions it creates and answers the decision it is told.
 type diditFalso struct {
 	workflows map[string]string // vendor_data -> workflow
@@ -177,8 +183,9 @@ func nuevoEscenario(t *testing.T) escenario {
 		Didit:          e.didit,
 		Verificaciones: e.datos,
 		ConfigDidit: identidad.ConfigDidit{WorkflowRegistro: "wf-registro", WorkflowBiometrico: "wf-biometrico",
-			CallbackURL: "https://agente.cajadebarrio.lat/didit/retorno"},
+			CallbackURL: "https://agente.cajadebarrio.lat/didit/retorno", SaldoInicial: 1000000},
 		Billeteras: e.billeteras,
+		Saldos:     e.datos,
 	})
 	mux := http.NewServeMux()
 	server.Register(mux)
@@ -231,6 +238,9 @@ func TestRegistroConDiditPrimeroYVerifikDespues(t *testing.T) {
 
 	// Asking again (the webhook and the browser can both arrive) applies nothing twice.
 	call(t, e.srv, http.MethodGet, "/internal/identidad/verificaciones/"+sid, "", true)
+	if len(e.datos.cargas) != 1 || e.datos.cargas[persona.WalletAddress+"|carga_inicial|"+sid] != 1000000 {
+		t.Fatalf("the new wallet must be loaded once: %v", e.datos.cargas)
+	}
 	if e.billeteras.creadas != 1 {
 		t.Fatalf("wallets created = %d, want 1", e.billeteras.creadas)
 	}

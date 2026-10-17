@@ -75,6 +75,8 @@ type Dependencias struct {
 	Verificaciones Verificaciones
 	ConfigDidit    ConfigDidit
 	Billeteras     Billeteras
+	// Saldos loads the virtual wallet of an approved registration. It may be nil.
+	Saldos Saldos
 }
 
 // Register adds the identity routes to the surface.
