@@ -109,6 +109,8 @@ services:
       # Superficie /internal del contrato: se monta solo con base y token.
       DATABASE_URL: postgres://caja:${CAJA_DB_PASSWORD}@db:5432/caja_de_barrio?sslmode=disable
       SERVICIO_TOKEN: ${SERVICIO_TOKEN:?falta SERVICIO_TOKEN, lo fija deploy/instalar.sh}
+      # El backend lee VERIFIK_TOKEN; en deploy/llaves.env se llama VERIFIK_API_KEY.
+      VERIFIK_TOKEN: ${VERIFIK_API_KEY:-}
 
 volumes:
   caddy-data:
