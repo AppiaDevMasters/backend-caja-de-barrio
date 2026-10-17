@@ -79,6 +79,29 @@ type Verifik struct {
 	Token string
 }
 
+// Didit holds the settings of the identity provider (contract 5.5 to 5.7). They carry
+// credentials, so they are read here and never printed.
+type Didit struct {
+	// APIKey is DIDIT_API_KEY. Empty means Didit is not configured and the
+	// verification routes answer so.
+	APIKey string
+
+	// WorkflowID is DIDIT_WORKFLOW_ID: registration (document + liveness).
+	WorkflowID string
+
+	// BiometricWorkflowID is DIDIT_BIOMETRIC_WORKFLOW_ID: every withdrawal (liveness
+	// and face match against the registered face). Empty falls back to WorkflowID.
+	BiometricWorkflowID string
+
+	// WebhookSecret is DIDIT_WEBHOOK_SECRET. Optional: the webhook route never trusts
+	// the body and always asks the provider for the decision.
+	WebhookSecret string
+
+	// CallbackURL is DIDIT_CALLBACK_URL: where the person's browser goes back to
+	// when the hosted flow ends. The session id is appended as ?session_id=.
+	CallbackURL string
+}
+
 // Rafiki holds the ASE side of the settings: the Admin API, the public base of
 // the wallet addresses and the two secrets of the endpoints Rafiki and the
 // identity provider call back. Load reads them but does not require them:
@@ -126,6 +149,7 @@ type Config struct {
 	Database Database
 	Internal Internal
 	Verifik  Verifik
+	Didit    Didit
 }
 
 // Load reads the environment and validates it. When a value cannot be used it
@@ -174,6 +198,13 @@ func Load() (Config, error) {
 		},
 		Verifik: Verifik{
 			Token: strings.TrimSpace(os.Getenv("VERIFIK_TOKEN")),
+		},
+		Didit: Didit{
+			APIKey:              strings.TrimSpace(os.Getenv("DIDIT_API_KEY")),
+			WorkflowID:          strings.TrimSpace(os.Getenv("DIDIT_WORKFLOW_ID")),
+			BiometricWorkflowID: strings.TrimSpace(os.Getenv("DIDIT_BIOMETRIC_WORKFLOW_ID")),
+			WebhookSecret:       strings.TrimSpace(os.Getenv("DIDIT_WEBHOOK_SECRET")),
+			CallbackURL:         strings.TrimSpace(os.Getenv("DIDIT_CALLBACK_URL")),
 		},
 	}, nil
 }
