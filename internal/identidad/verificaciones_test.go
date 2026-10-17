@@ -24,6 +24,7 @@ type memoria struct {
 	politicas map[string]bool
 	alertas   []string
 	cargas    map[string]int64
+	motivos   []string
 }
 
 func nuevaMemoria() *memoria {
@@ -119,6 +120,11 @@ func (m *memoria) CrearAlerta(_ context.Context, _, personaID, regla, _ string) 
 
 func (m *memoria) RegistrarMovimiento(_ context.Context, _, wallet, tipo string, monto int64, referencia string) error {
 	m.cargas[wallet+"|"+tipo+"|"+referencia] = monto
+	return nil
+}
+
+func (m *memoria) AnotarMotivoRevision(_ context.Context, personaID, motivo string) error {
+	m.motivos = append(m.motivos, personaID+":"+motivo)
 	return nil
 }
 

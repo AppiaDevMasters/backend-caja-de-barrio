@@ -29,6 +29,7 @@ type Verificaciones interface {
 	MarcarVerificacion(ctx context.Context, personaID, sesionID string, hasta *time.Time) error
 	CompletarRegistro(ctx context.Context, personaID, cedula, nombre, wallet, estado string) error
 	CrearAlerta(ctx context.Context, id, personaID, regla, detalle string) error
+	AnotarMotivoRevision(ctx context.Context, personaID, motivo string) error
 }
 
 // Didit is the provider client these routes need, as an interface so the routes can be
@@ -375,10 +376,15 @@ func aplicarVeredicto(ctx context.Context, deps Dependencias, sesion store.Sesio
 	// Registration: nothing is approved on the provider's word alone. The registry has
 	// to know the document; otherwise the person goes to manual review.
 	estado, cedula, nombre := "revision_manual", decision.Document.Number, decision.Document.FullName
+	motivoRevision := "Didit no leyó el número del documento."
+	if cedula != "" {
+		motivoRevision = "Verifik no encontró ese documento en el registro civil."
+	}
 	if cedula != "" && deps.Cedulas != nil {
 		documento, err := deps.Cedulas.VerifyDocument(ctx, "CC", cedula)
 		if err != nil {
 			slog.Error("verifik: checking the document Didit read", "session_id", sesion.ID, "error", err)
+			motivoRevision = "El registro civil (Verifik) no respondió; revisar el documento a mano."
 		} else if documento.Valid {
 			estado = "aprobada"
 			if documento.FullName != "" {
@@ -399,6 +405,11 @@ func aplicarVeredicto(ctx context.Context, deps Dependencias, sesion store.Sesio
 
 	if err := deps.Verificaciones.CompletarRegistro(ctx, sesion.PersonaID, cedula, nombre, wallet, estado); err != nil {
 		return falla
+	}
+	if estado == "revision_manual" {
+		if err := deps.Verificaciones.AnotarMotivoRevision(ctx, sesion.PersonaID, motivoRevision); err != nil {
+			slog.Error("recording why the registration went to review", "persona_id", sesion.PersonaID, "error", err)
+		}
 	}
 
 	// The demo's virtual wallet starts with its load, once per approving session.
