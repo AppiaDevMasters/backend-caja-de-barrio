@@ -15,7 +15,9 @@ const (
 
 	depositOutgoingPaymentLiquidityMutation = `mutation DepositOutgoingPaymentLiquidity($input: DepositOutgoingPaymentLiquidityInput!) { depositOutgoingPaymentLiquidity(input: $input) { success } }`
 
-	withdrawIncomingPaymentLiquidityMutation = `mutation WithdrawIncomingPaymentLiquidity($input: WithdrawIncomingPaymentLiquidityInput!) { withdrawIncomingPaymentLiquidity(input: $input) { success } }`
+	// Rafiki 2.x names it createIncomingPaymentWithdrawal; the older withdrawIncomingPaymentLiquidity
+	// does not exist in the schema of the deployed version.
+	withdrawIncomingPaymentLiquidityMutation = `mutation CreateIncomingPaymentWithdrawal($input: CreateIncomingPaymentWithdrawalInput!) { createIncomingPaymentWithdrawal(input: $input) { success } }`
 )
 
 // WithdrawIncomingPaymentLiquidity takes out of Rafiki the money a completed incoming
@@ -27,12 +29,14 @@ func (c *Client) WithdrawIncomingPaymentLiquidity(ctx context.Context, paymentID
 	input := map[string]any{
 		"incomingPaymentId": paymentID,
 		"idempotencyKey":    "cobro:retirar:" + paymentID,
+		// Zero is a single-phase transfer, posted at once.
+		"timeoutSeconds": "0",
 	}
 
 	var data struct {
 		WithdrawIncomingPaymentLiquidity struct {
 			Success bool `json:"success"`
-		} `json:"withdrawIncomingPaymentLiquidity"`
+		} `json:"createIncomingPaymentWithdrawal"`
 	}
 	if err := c.Do(ctx, withdrawIncomingPaymentLiquidityMutation, map[string]any{"input": input}, &data); err != nil {
 		return err
