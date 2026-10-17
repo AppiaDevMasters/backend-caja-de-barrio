@@ -257,11 +257,14 @@ el grant interactivo, la aprobación con su **hash verificado**, la espera del *
 (obligatoria antes de continuar un grant: `WAIT_SECONDS`, cinco por defecto, y el servidor contesta
 `400 continued grant faster than "wait" period` si se adelanta) y el **token aprobado**.
 
-El **paso 7** —los dos pagos con la rotación y la comprobación de que el dinero llegó— llegó hasta
-su última rotación: los **dos pagos se hicieron** y falló la rotación final, porque la URL de gestión
-que devuelve **cada rotación** vuelve a traer el **host público** de la demo, inalcanzable desde
-dentro de la red. Es el octavo defecto de la lista, y su corrección —reescribir ese host en el
-cliente y no en cada llamada— es la que falta.
+El **paso 7** se completó hasta sus pagos: los **dos pagos se crearon** y el token **rotó** —el octavo
+defecto, el host público de la URL de gestión, quedó corregido—. Lo que falta es la **liquidación**:
+los dos pagos quedan en estado **`FUNDING`**, sin intentos y sin error, porque Rafiki no puede
+fondearlos desde la cuenta del cliente, y en el stack local esa cuenta **no tiene saldo**. Es el
+mismo hallazgo que ya estaba en la bitácora: la liquidez del activo no es saldo de una wallet
+address, el saldo aparece recién cuando un pago entrante real la acredita. En la demo de verdad la
+wallet del cliente vive en la **test wallet**, que sí tiene fondos, y nuestro ASE es el que recibe;
+así que esta parada es una propiedad de la **topología del ensayo local**, no del código.
 
 **Ocho defectos reales encontró esta iteración**, todos en las **costuras** entre piezas y ninguno
 visible con pruebas contra dobles. Los tres primeros son los que más vale la pena conocer:
