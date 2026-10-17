@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -31,8 +32,10 @@ func (s *Store) CupoDe(ctx context.Context, personaID string) (Cupo, bool, error
 		where persona_id = $1`
 
 	var (
-		cupo       Cupo
-		aprobadoEn *string
+		cupo Cupo
+		// A timestamptz arrives in binary and does not scan into a string: the first
+		// approved cupo turned 5.1 into a 500 for its person.
+		aprobadoEn *time.Time
 	)
 	err := s.pool.QueryRow(ctx, query, personaID).Scan(&cupo.Limite, &cupo.Usado, &cupo.Moneda, &aprobadoEn, &cupo.WalletAddress)
 	if errors.Is(err, pgx.ErrNoRows) {
