@@ -68,6 +68,7 @@ type ReservarParams struct {
 //   - the store's own row is locked before the cash is read, so two reservations of
 //     the same cash cannot both succeed: the second one waits, reads the cash the
 //     first one already reserved, and is refused.
+//
 // zonaDemo is the zone whose calendar day the cash belongs to. pgx sends a time to a
 // ::date parameter as the day of the time's own location, so a UTC time after 19:00
 // in Bogotá would name tomorrow, a day with no published cash.
@@ -140,8 +141,8 @@ func (s *Store) Reservar(ctx context.Context, params ReservarParams) (Reserva, e
 	_, err = tx.Exec(ctx, `
 		insert into reservas (
 			id, tienda_id, persona_id, monto_cop, comision_tendero_cop,
-			comision_plataforma_cop, codigo, estado, creada_en, vence_en, fecha_efectivo
-		) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date)`,
+			comision_plataforma_cop, codigo, estado, creada_en, vence_en, fecha_efectivo, face_match_ok
+		) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date, true)`,
 		reserva.ID,
 		reserva.TiendaID,
 		reserva.PersonaID,
