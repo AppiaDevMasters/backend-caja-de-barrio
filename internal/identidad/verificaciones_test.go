@@ -78,6 +78,22 @@ func (m *memoria) SesionVerificacionPorID(_ context.Context, id string) (store.S
 	s, ok := m.sesiones[id]
 	return s, ok, nil
 }
+func (m *memoria) SesionVerificacionPorDiditID(_ context.Context, diditID string) (store.SesionVerificacion, bool, error) {
+	for _, s := range m.sesiones {
+		if s.DiditSessionID == diditID {
+			return s, true, nil
+		}
+	}
+	return store.SesionVerificacion{}, false, nil
+}
+func (m *memoria) UltimaAltaAprobada(_ context.Context, personaID string) (string, bool, error) {
+	for _, s := range m.sesiones {
+		if s.PersonaID == personaID && s.Motivo == "alta" && s.Aprobada != nil && *s.Aprobada {
+			return s.ID, true, nil
+		}
+	}
+	return "", false, nil
+}
 func (m *memoria) ResolverSesionVerificacion(_ context.Context, id string, aprobada bool, score *float64) (bool, error) {
 	s := m.sesiones[id]
 	if s.Aprobada != nil {
@@ -278,11 +294,25 @@ func TestElRetiroUsaElWorkflowBiometricoYUnRechazoDejaAlerta(t *testing.T) {
 	e.datos.politicas["573000000001"] = true
 	e.datos.personas["per_laura"] = store.Persona{ID: "per_laura", Whatsapp: "573000000001", EstadoRegistro: "aprobada"}
 
+	// Without a registration session there is no stored face: the full workflow runs.
 	_, body := call(t, e.srv, http.MethodPost, "/internal/identidad/verificaciones",
 		`{"persona_id":"per_laura","motivo":"retiro"}`, true)
+	if sinAlta := body["session_id"].(string); e.didit.workflows[sinAlta] != "wf-registro" {
+		t.Fatalf("without a registration, workflow = %q", e.didit.workflows[sinAlta])
+	}
+
+	si := true
+	e.datos.sesiones["did_alta_laura"] = store.SesionVerificacion{ID: "did_alta_laura", PersonaID: "per_laura",
+		Motivo: "alta", Aprobada: &si}
+	_, body = call(t, e.srv, http.MethodPost, "/internal/identidad/verificaciones",
+		`{"persona_id":"per_laura","motivo":"retiro"}`, true)
 	sid := body["session_id"].(string)
-	if e.didit.workflows[sid] != "wf-biometrico" {
-		t.Fatalf("workflow = %q, want the biometric one", e.didit.workflows[sid])
+	// Didit matches the face stored under the registration's vendor_data.
+	if e.didit.workflows["did_alta_laura"] != "wf-biometrico" {
+		t.Fatalf("the withdrawal must reuse the registration's vendor_data with the biometric workflow: %v", e.didit.workflows)
+	}
+	if !strings.HasSuffix(e.didit.callbacks["did_alta_laura"], "session_id="+sid) && e.didit.callbacks["did_alta_laura"] != "" {
+		t.Fatalf("the browser comes back with our own session id: %q", e.didit.callbacks["did_alta_laura"])
 	}
 
 	no := false

@@ -25,6 +25,8 @@ type Verificaciones interface {
 	CrearSesionVerificacion(ctx context.Context, id, personaID, motivo string) error
 	AsignarSesionDidit(ctx context.Context, id, diditSessionID string) error
 	SesionVerificacionPorID(ctx context.Context, id string) (store.SesionVerificacion, bool, error)
+	SesionVerificacionPorDiditID(ctx context.Context, diditSessionID string) (store.SesionVerificacion, bool, error)
+	UltimaAltaAprobada(ctx context.Context, personaID string) (string, bool, error)
 	ResolverSesionVerificacion(ctx context.Context, id string, aprobada bool, score *float64) (bool, error)
 	MarcarVerificacion(ctx context.Context, personaID, sesionID string, hasta *time.Time) error
 	CompletarRegistro(ctx context.Context, personaID, cedula, nombre, wallet, estado string) error
@@ -135,11 +137,22 @@ func crearVerificacion(deps Dependencias) http.HandlerFunc {
 			return
 		}
 
-		workflow := deps.ConfigDidit.WorkflowRegistro
+		// The biometric workflow matches the face against the one Didit stored for the
+		// same vendor_data, so a withdrawal reuses the vendor_data of the registration
+		// session that approved the person. Without one, the full workflow runs instead.
+		workflow, vendorData := deps.ConfigDidit.WorkflowRegistro, id
 		if motivo == "retiro" && deps.ConfigDidit.WorkflowBiometrico != "" {
-			workflow = deps.ConfigDidit.WorkflowBiometrico
+			alta, tieneAlta, err := deps.Verificaciones.UltimaAltaAprobada(r.Context(), persona.ID)
+			if err != nil {
+				api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo crear la verificación."))
+
+				return
+			}
+			if tieneAlta {
+				workflow, vendorData = deps.ConfigDidit.WorkflowBiometrico, alta
+			}
 		}
-		sesion, err := deps.Didit.CreateSessionWith(r.Context(), workflow, id, callbackDe(deps.ConfigDidit.CallbackURL, id))
+		sesion, err := deps.Didit.CreateSessionWith(r.Context(), workflow, vendorData, callbackDe(deps.ConfigDidit.CallbackURL, id))
 		if err != nil {
 			slog.Error("didit: creating a session", "session_id", id, "error", err)
 			api.Fail(w, api.Errorf(api.CodeProveedor, "No se pudo crear la sesión en Didit."))
@@ -373,7 +386,18 @@ func webhookDidit(deps Dependencias) http.HandlerFunc {
 			return
 		}
 
-		sesion, existe, err := deps.Verificaciones.SesionVerificacionPorID(r.Context(), evento.VendorData)
+		// A withdrawal session carries the vendor_data of the registration, so ours is
+		// found by the provider's session id first and by vendor_data after.
+		var (
+			sesion store.SesionVerificacion
+			existe bool
+		)
+		if evento.SessionID != "" {
+			sesion, existe, err = deps.Verificaciones.SesionVerificacionPorDiditID(r.Context(), evento.SessionID)
+		}
+		if err == nil && !existe {
+			sesion, existe, err = deps.Verificaciones.SesionVerificacionPorID(r.Context(), evento.VendorData)
+		}
 		if err != nil {
 			api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo leer la verificación."))
 

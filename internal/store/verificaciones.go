@@ -65,6 +65,42 @@ func (s *Store) SesionVerificacionPorID(ctx context.Context, id string) (SesionV
 	return sesion, true, nil
 }
 
+// SesionVerificacionPorDiditID finds our session by the provider's session id.
+func (s *Store) SesionVerificacionPorDiditID(ctx context.Context, diditSessionID string) (SesionVerificacion, bool, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `select id from sesiones_verificacion where didit_session_id = $1`, diditSessionID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SesionVerificacion{}, false, nil
+	}
+	if err != nil {
+		return SesionVerificacion{}, false, fmt.Errorf("store: finding the session of Didit %s: %w", diditSessionID, err)
+	}
+
+	return s.SesionVerificacionPorID(ctx, id)
+}
+
+// UltimaAltaAprobada returns the id of the registration session that approved the
+// person: Didit keeps her face under that vendor_data, and every withdrawal's face
+// match is made against it.
+func (s *Store) UltimaAltaAprobada(ctx context.Context, personaID string) (string, bool, error) {
+	const query = `
+		select id from sesiones_verificacion
+		where persona_id = $1 and motivo = 'alta' and aprobada
+		order by resuelta_en desc nulls last
+		limit 1`
+
+	var id string
+	err := s.pool.QueryRow(ctx, query, personaID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("store: finding the registration of %s: %w", personaID, err)
+	}
+
+	return id, true, nil
+}
+
 // ResolverSesionVerificacion records the verdict ONCE. It answers true only to the
 // caller that resolved it: the webhook and the query after the browser comes back can
 // arrive together, and the effects of a verdict (Verifik, the registration, the
