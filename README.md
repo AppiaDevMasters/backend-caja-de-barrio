@@ -429,6 +429,8 @@ nombres que difieren. La tabla está en
 
 - [`docs/configuracion.md`](docs/configuracion.md) — referencia por variable, verificada
   contra los `os.Getenv` del código. Es la fuente de los nombres.
+- [`docs/seccion-11.md`](docs/seccion-11.md) — respuesta operativa a la sección 11: URL base,
+  canales privados, wallets, prueba mínima y estado del webhook de Didit.
 - [`env.example`](env.example) — los nombres con valores de ejemplo, sin secretos.
 - [`rafiki/README.md`](rafiki/README.md) — el stack de Rafiki: servicios, puertos, la
   clave del ASE, por qué el backend vive dentro de la red y la UI de administración.
