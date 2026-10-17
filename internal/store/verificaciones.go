@@ -15,6 +15,7 @@ import (
 type SesionVerificacion struct {
 	ID             string
 	PersonaID      string
+	TiendaID       string
 	Motivo         string
 	DiditSessionID string
 	Aprobada       *bool
@@ -45,13 +46,14 @@ func (s *Store) AsignarSesionDidit(ctx context.Context, id, diditSessionID strin
 // SesionVerificacionPorID returns one session and says whether it exists.
 func (s *Store) SesionVerificacionPorID(ctx context.Context, id string) (SesionVerificacion, bool, error) {
 	const query = `
-		select id, persona_id, motivo, coalesce(didit_session_id, ''), aprobada, score::float8
+		select id, coalesce(persona_id, ''), coalesce(tienda_id, ''), motivo, coalesce(didit_session_id, ''),
+		       aprobada, score::float8
 		from sesiones_verificacion
 		where id = $1`
 
 	var sesion SesionVerificacion
 	err := s.pool.QueryRow(ctx, query, id).Scan(
-		&sesion.ID, &sesion.PersonaID, &sesion.Motivo, &sesion.DiditSessionID, &sesion.Aprobada, &sesion.Score,
+		&sesion.ID, &sesion.PersonaID, &sesion.TiendaID, &sesion.Motivo, &sesion.DiditSessionID, &sesion.Aprobada, &sesion.Score,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SesionVerificacion{}, false, nil

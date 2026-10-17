@@ -127,6 +127,8 @@ type Tendero struct {
 	NombreTienda  string
 	Nombre        string
 	EfectivoLibre int64
+	// Estado is the store's: activa, inactiva, pendiente_verificacion or revision_manual.
+	Estado string
 }
 
 // TenderoPorWhatsapp returns the store of that storekeeper's number and the cash it
@@ -134,7 +136,7 @@ type Tendero struct {
 func (s *Store) TenderoPorWhatsapp(ctx context.Context, whatsapp string, fecha time.Time) (Tendero, bool, error) {
 	const query = `
 		select t.id, t.nombre, t.nombre_tendero,
-		       coalesce(e.publicado_cop - e.reservado_cop, 0)
+		       coalesce(e.publicado_cop - e.reservado_cop, 0), t.estado
 		from tiendas t
 		left join efectivo_disponible e
 		       on e.tienda_id = t.id and e.fecha = $2::date
@@ -148,6 +150,7 @@ func (s *Store) TenderoPorWhatsapp(ctx context.Context, whatsapp string, fecha t
 		&tendero.NombreTienda,
 		&tendero.Nombre,
 		&tendero.EfectivoLibre,
+		&tendero.Estado,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Tendero{}, false, nil
