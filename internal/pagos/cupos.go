@@ -97,6 +97,20 @@ func pedirCupo(deps Dependencias) http.HandlerFunc {
 			return
 		}
 
+		// The agent can ask again while the person has not approved yet. A new grant would
+		// kill the link she already has ("No existe ese cupo"), so a recent pending grant on
+		// the same wallet is answered again.
+		if pendiente, tiene, err := deps.Datos.CupoPorPersona(r.Context(), persona.ID); err == nil && tiene &&
+			pendiente.AprobadoEn == nil && pendiente.RedirectURL != "" && mismaWallet(pendiente.WalletAddress, wallet) &&
+			time.Since(pendiente.CreadoEn) < vigenciaEnlaceCupo {
+			api.JSON(w, http.StatusOK, map[string]any{
+				"grant_id": pendiente.GrantID, "redirect_url": pendiente.RedirectURL, "pendiente": true,
+				"limite": pendiente.Limite, "moneda": pendiente.Moneda, "intervalo": "P7D",
+			})
+
+			return
+		}
+
 		documento, err := deps.OpenPayments.ResolveWalletAddress(r.Context(), wallet)
 		if err != nil {
 			slog.Error("pagos: resolving the client's wallet", "persona_id", persona.ID, "error", err)
@@ -140,7 +154,7 @@ func pedirCupo(deps Dependencias) http.HandlerFunc {
 			PersonaID: persona.ID, GrantID: grantID, WalletAddress: wallet, Limite: float64(limite),
 			Moneda: documento.AssetCode, Intervalo: "P7D", ContinueURI: grant.ContinueURI,
 			ContinueToken: grant.ContinueToken, ClientNonce: grant.ClientNonce, ServerNonce: grant.ServerNonce,
-			AuthServer: authServerDelHash(deps, grant),
+			AuthServer: authServerDelHash(deps, grant), RedirectURL: grant.RedirectURL,
 		})
 		if errors.Is(err, store.ErrCupoAprobado) {
 			api.Fail(w, api.Errorf(api.CodeEstadoInvalido, "La persona ya aprobó su cupo."))
@@ -261,3 +275,6 @@ func authServerDelHash(deps Dependencias, grant opclient.OutgoingPaymentGrant) s
 
 	return deps.Config.AuthServerHash
 }
+
+// vigenciaEnlaceCupo is how long a pending cupo's approval link is handed out again.
+const vigenciaEnlaceCupo = 8 * time.Minute

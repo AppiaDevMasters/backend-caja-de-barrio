@@ -117,6 +117,7 @@ func (m *memoria) MarcarPagada(context.Context, string) (bool, error) {
 	return true, nil
 }
 func (m *memoria) GuardarCupoPendiente(_ context.Context, c store.CupoGrant) error {
+	c.CreadoEn = time.Now()
 	m.cupo = &c
 	return nil
 }

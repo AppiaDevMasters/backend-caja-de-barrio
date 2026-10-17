@@ -152,3 +152,12 @@ func TestElSaldoEnTestnetDiceDondeEstaLaPlataYNoInventaUnSaldo(t *testing.T) {
 		t.Fatalf("an unknown number = %d", status)
 	}
 }
+
+func TestPedirElCupoOtraVezDevuelveElMismoEnlacePendiente(t *testing.T) {
+	e := nuevoEscenarioCon(t, modoTestnet)
+	_, primero := e.pedir(t, http.MethodPost, "/pagos/cupos", `{"persona_id":"per_cristian"}`)
+	status, segundo := e.pedir(t, http.MethodPost, "/pagos/cupos", `{"persona_id":"per_cristian"}`)
+	if status != http.StatusOK || segundo["grant_id"] != primero["grant_id"] || segundo["redirect_url"] != primero["redirect_url"] {
+		t.Fatalf("asking again must keep the link the person already has: %v then %d %v", primero, status, segundo)
+	}
+}
