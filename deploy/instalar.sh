@@ -95,8 +95,10 @@ if [ ! -f deploy/llaves.env ]; then
   echo "Se creó deploy/llaves.env vacío: llena Verifik y Didit y vuelve a correr este script."
 fi
 chmod 600 deploy/llaves.env
+# Si se editó desde Windows trae fines de línea CRLF: el \r se pegaría a cada valor.
+sed -i 's/\r$//' deploy/llaves.env
 for llave in DIDIT_API_KEY DIDIT_WORKFLOW_ID DIDIT_BIOMETRIC_WORKFLOW_ID VERIFIK_API_KEY; do
-  grep -q "^$llave=." deploy/llaves.env && echo "  $llave: puesta" || echo "  $llave: FALTA"
+  grep -q "^$llave=[^[:space:]]" deploy/llaves.env && echo "  $llave: puesta" || echo "  $llave: FALTA"
 done
 # Se cargan también para Compose, que traduce nombres donde el backend usa otro
 # (VERIFIK_API_KEY → VERIFIK_TOKEN). Los valores no se imprimen.
