@@ -313,3 +313,80 @@ func TestElWebhookIgnoraSesionesDeOtroProyectoYLeeLaDecisionDeDidit(t *testing.T
 		t.Fatalf("our session must be resolved by asking Didit: %v", body)
 	}
 }
+
+// altasFalsas keeps the stores of the storekeeper's verification.
+type altasFalsas struct {
+	tiendas map[string]store.TiendaRegistro
+	cedulas map[string]string
+	alertas []string
+	datos   *memoria
+}
+
+func (a *altasFalsas) TiendaRegistroPorID(_ context.Context, id string) (store.TiendaRegistro, bool, error) {
+	t, ok := a.tiendas[id]
+	return t, ok, nil
+}
+func (a *altasFalsas) CrearSesionVerificacionTienda(_ context.Context, id, tiendaID string) error {
+	a.datos.sesiones[id] = store.SesionVerificacion{ID: id, TiendaID: tiendaID, Motivo: "alta_tendero"}
+	return nil
+}
+func (a *altasFalsas) ResolverAltaTendero(_ context.Context, tiendaID, estado, cedula, _ string) error {
+	t := a.tiendas[tiendaID]
+	if t.Estado == "pendiente_verificacion" {
+		t.Estado = estado
+		a.tiendas[tiendaID], a.cedulas[tiendaID] = t, cedula
+	}
+	return nil
+}
+func (a *altasFalsas) CrearAlertaTienda(_ context.Context, _, tiendaID, regla, _ string) error {
+	a.alertas = append(a.alertas, tiendaID+":"+regla)
+	return nil
+}
+
+func TestElTenderoDelPanelSeVerificaYSuTiendaQuedaActiva(t *testing.T) {
+	e := nuevoEscenario(t)
+	altas := &altasFalsas{datos: e.datos, cedulas: map[string]string{}, tiendas: map[string]store.TiendaRegistro{
+		"tie_prueba": {ID: "tie_prueba", Nombre: "Tienda La Prueba", Estado: "pendiente_verificacion",
+			WhatsappTendero: "573001112233", NombreTendero: "Pedro"},
+	}}
+	server, err := api.New(api.Config{ServiceToken: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identidad.Register(server, identidad.Dependencias{
+		Datos: e.datos, Cedulas: registroFalso{validos: map[string]string{"1036123456": "PEDRO TENDERO"}},
+		Carteras: carterasDeAdorno{}, Didit: e.didit, Verificaciones: e.datos, AltasTendero: altas,
+		ConfigDidit: identidad.ConfigDidit{WorkflowRegistro: "wf-registro", WorkflowBiometrico: "wf-biometrico"},
+	})
+	mux := http.NewServeMux()
+	server.Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	status, body := call(t, srv, http.MethodPost, "/internal/identidad/verificaciones", `{"tienda_id":"tie_prueba","motivo":"alta_tendero"}`, true)
+	if status != http.StatusConflict || codeOf(t, body) != "SIN_POLITICAS" {
+		t.Fatalf("without policies = %d %v", status, body)
+	}
+	e.datos.politicas["573001112233"] = true
+	status, body = call(t, srv, http.MethodPost, "/internal/identidad/verificaciones", `{"tienda_id":"tie_prueba","motivo":"alta_tendero"}`, true)
+	if status != http.StatusCreated {
+		t.Fatalf("status = %d %v", status, body)
+	}
+	sid := body["session_id"].(string)
+	if e.didit.workflows[sid] != "wf-registro" {
+		t.Fatalf("the storekeeper uses the registration workflow, got %q", e.didit.workflows[sid])
+	}
+
+	e.didit.decision = aprobada("1036123456")
+	_, body = call(t, srv, http.MethodGet, "/internal/identidad/verificaciones/"+sid, "", true)
+	if body["estado_tienda"] != "activa" || body["whatsapp"] != "573001112233" || body["tienda_id"] != "tie_prueba" {
+		t.Fatalf("the verified storekeeper must activate his store: %v", body)
+	}
+	if altas.cedulas["tie_prueba"] != "1036123456" {
+		t.Fatalf("the store keeps the storekeeper's document: %v", altas.cedulas)
+	}
+	status, _ = call(t, srv, http.MethodPost, "/internal/identidad/verificaciones", `{"tienda_id":"tie_prueba","motivo":"alta_tendero"}`, true)
+	if status != http.StatusConflict {
+		t.Fatalf("an active store needs no verification: %d", status)
+	}
+}

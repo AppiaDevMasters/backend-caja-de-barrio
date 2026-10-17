@@ -58,6 +58,14 @@ type ConfigDidit struct {
 	SaldoInicial int64
 }
 
+// AltasTendero is what the storekeeper's verification needs (panel-de-control-v3.md, 3.3).
+type AltasTendero interface {
+	TiendaRegistroPorID(ctx context.Context, id string) (store.TiendaRegistro, bool, error)
+	CrearSesionVerificacionTienda(ctx context.Context, id, tiendaID string) error
+	ResolverAltaTendero(ctx context.Context, tiendaID, estado, cedula, motivoRevision string) error
+	CrearAlertaTienda(ctx context.Context, id, tiendaID, regla, detalle string) error
+}
+
 // Saldos records the movements of the virtual wallet of the demo.
 type Saldos interface {
 	RegistrarMovimiento(ctx context.Context, id, wallet, tipo string, monto int64, referencia string) error
@@ -92,8 +100,13 @@ func crearVerificacion(deps Dependencias) http.HandlerFunc {
 			return
 		}
 		motivo := strings.TrimSpace(body.Motivo)
-		if body.TiendaID != "" || body.SolicitudID != "" || motivo == "alta_tendero" {
-			api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "La verificación de tenderos todavía no está disponible."))
+		if body.SolicitudID != "" {
+			api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "Las solicitudes de tendero por WhatsApp todavía no están disponibles."))
+
+			return
+		}
+		if body.TiendaID != "" || motivo == "alta_tendero" {
+			crearVerificacionTendero(w, r, deps, body)
 
 			return
 		}
@@ -141,6 +154,88 @@ func crearVerificacion(deps Dependencias) http.HandlerFunc {
 
 		api.JSON(w, http.StatusCreated, map[string]any{"session_id": id, "url_verificacion": sesion.URL})
 	}
+}
+
+// crearVerificacionTendero opens the Didit session of the keeper of a store the panel
+// registered: the registration workflow, which reads the document Verifik then checks.
+func crearVerificacionTendero(w http.ResponseWriter, r *http.Request, deps Dependencias, body crearVerificacionBody) {
+	if deps.AltasTendero == nil {
+		api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "La verificación de tenderos todavía no está disponible."))
+
+		return
+	}
+
+	tiendaID := strings.TrimSpace(body.TiendaID)
+	if tiendaID == "" && strings.TrimSpace(body.Whatsapp) != "" {
+		tendero, existe, err := deps.Datos.TenderoPorWhatsapp(r.Context(), strings.TrimSpace(body.Whatsapp), time.Now().In(zonaColombia))
+		if err != nil {
+			api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo leer la tienda."))
+
+			return
+		}
+		if existe {
+			tiendaID = tendero.TiendaID
+		}
+	}
+	if tiendaID == "" {
+		api.Fail(w, api.Errorf(api.CodeDatosInvalidos, "Falta tienda_id."))
+
+		return
+	}
+
+	tienda, existe, err := deps.AltasTendero.TiendaRegistroPorID(r.Context(), tiendaID)
+	if err != nil {
+		api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo leer la tienda."))
+
+		return
+	}
+	if !existe {
+		api.Fail(w, api.Errorf(api.CodeNoEncontrado, "No existe esa tienda."))
+
+		return
+	}
+	if tienda.Estado != "pendiente_verificacion" {
+		api.Fail(w, api.Errorf(api.CodeEstadoInvalido, "La tienda está %s; no necesita verificación.", tienda.Estado))
+
+		return
+	}
+	aceptadas, err := deps.Datos.PoliticasAceptadas(r.Context(), tienda.WhatsappTendero, VersionPoliticas)
+	if err != nil {
+		api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo leer la tienda."))
+
+		return
+	}
+	if !aceptadas {
+		api.Fail(w, api.Errorf(api.CodeSinPoliticas, "Sin aceptar las políticas no se puede verificar la identidad."))
+
+		return
+	}
+
+	id, err := nuevoID("did_")
+	if err != nil {
+		api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo crear la verificación."))
+
+		return
+	}
+	if err := deps.AltasTendero.CrearSesionVerificacionTienda(r.Context(), id, tienda.ID); err != nil {
+		api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo crear la verificación."))
+
+		return
+	}
+	sesion, err := deps.Didit.CreateSessionWith(r.Context(), deps.ConfigDidit.WorkflowRegistro, id, callbackDe(deps.ConfigDidit.CallbackURL, id))
+	if err != nil {
+		slog.Error("didit: creating a storekeeper session", "session_id", id, "error", err)
+		api.Fail(w, api.Errorf(api.CodeProveedor, "No se pudo crear la sesión en Didit."))
+
+		return
+	}
+	if err := deps.Verificaciones.AsignarSesionDidit(r.Context(), id, sesion.ID); err != nil {
+		api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo guardar la sesión de Didit."))
+
+		return
+	}
+
+	api.JSON(w, http.StatusCreated, map[string]any{"session_id": id, "url_verificacion": sesion.URL})
 }
 
 // personaAVerificar finds (or, for a new number, creates) the person a session is for.
@@ -321,13 +416,38 @@ func resolver(ctx context.Context, deps Dependencias, sesion store.SesionVerific
 			if err != nil {
 				return nil, api.Errorf(api.CodeInterno, "No se pudo guardar el resultado.")
 			}
-			if aplico {
+			if aplico && sesion.TiendaID != "" {
+				if err := aplicarVeredictoTienda(ctx, deps, sesion, decision); err != nil {
+					return nil, err
+				}
+			} else if aplico {
 				if err := aplicarVeredicto(ctx, deps, sesion, decision); err != nil {
 					return nil, err
 				}
 			}
 			sesion.Aprobada, sesion.Score = decision.Approved, decision.Score
 		}
+	}
+
+	if sesion.TiendaID != "" {
+		if deps.AltasTendero == nil {
+			return nil, api.Errorf(api.CodeInterno, "La verificación de tenderos no está configurada.")
+		}
+		tienda, _, err := deps.AltasTendero.TiendaRegistroPorID(ctx, sesion.TiendaID)
+		if err != nil {
+			return nil, api.Errorf(api.CodeInterno, "No se pudo leer la tienda.")
+		}
+
+		return map[string]any{
+			"aprobada":      sesion.Aprobada,
+			"score":         sesion.Score,
+			"pendiente":     sesion.Aprobada == nil,
+			"motivo":        sesion.Motivo,
+			"whatsapp":      tienda.WhatsappTendero,
+			"persona_id":    nil,
+			"tienda_id":     tienda.ID,
+			"estado_tienda": tienda.Estado,
+		}, nil
 	}
 
 	persona, _, err := deps.Verificaciones.PersonaPorID(ctx, sesion.PersonaID)
@@ -421,6 +541,45 @@ func aplicarVeredicto(ctx context.Context, deps Dependencias, sesion store.Sesio
 		if err != nil {
 			slog.Error("saldos: loading the new wallet", "persona_id", sesion.PersonaID, "error", err)
 		}
+	}
+
+	return nil
+}
+
+// aplicarVeredictoTienda runs the effects of the storekeeper's verdict, once. Approved:
+// Verifik on the document Didit read; a valid document activates the store, anything
+// else leaves it in revision_manual for the panel. Declined: the store keeps waiting
+// (the storekeeper can try again) and an alert is raised.
+func aplicarVeredictoTienda(ctx context.Context, deps Dependencias, sesion store.SesionVerificacion, decision didit.Decision) error {
+	if !*decision.Approved {
+		alerta, err := nuevoID("ale_")
+		if err == nil {
+			err = deps.AltasTendero.CrearAlertaTienda(ctx, alerta, sesion.TiendaID, "verificacion_facial_fallida", "sesión "+sesion.ID)
+		}
+		if err != nil {
+			slog.Error("recording the failed storekeeper verification", "tienda_id", sesion.TiendaID, "error", err)
+		}
+
+		return nil
+	}
+
+	estado, cedula := "revision_manual", decision.Document.Number
+	motivoRevision := "Didit no leyó el número del documento."
+	if cedula != "" {
+		motivoRevision = "Verifik no encontró ese documento en el registro civil."
+	}
+	if cedula != "" && deps.Cedulas != nil {
+		documento, err := deps.Cedulas.VerifyDocument(ctx, "CC", cedula)
+		if err != nil {
+			slog.Error("verifik: checking the storekeeper's document", "session_id", sesion.ID, "error", err)
+			motivoRevision = "El registro civil (Verifik) no respondió; revisar el documento a mano."
+		} else if documento.Valid {
+			estado, motivoRevision = "activa", ""
+		}
+	}
+
+	if err := deps.AltasTendero.ResolverAltaTendero(ctx, sesion.TiendaID, estado, cedula, motivoRevision); err != nil {
+		return api.Errorf(api.CodeInterno, "No se pudo aplicar el resultado de la verificación.")
 	}
 
 	return nil

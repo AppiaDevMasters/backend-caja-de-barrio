@@ -77,6 +77,9 @@ type Dependencias struct {
 	Billeteras     Billeteras
 	// Saldos loads the virtual wallet of an approved registration. It may be nil.
 	Saldos Saldos
+	// AltasTendero verifies the keeper of a store the panel registered. Nil answers
+	// alta_tendero as not available.
+	AltasTendero AltasTendero
 }
 
 // Register adds the identity routes to the surface.
@@ -113,6 +116,11 @@ type tenderoBody struct {
 	NombreTienda     string `json:"nombre_tienda"`
 	Nombre           string `json:"nombre"`
 	EfectivoLibreCOP int64  `json:"efectivo_libre_cop"`
+	// EstadoTienda tells the agent whether the storekeeper still has to verify
+	// (pendiente_verificacion) before the store can work.
+	EstadoTienda       string `json:"estado_tienda"`
+	PoliticasAceptadas bool   `json:"politicas_aceptadas"`
+	PoliticasVersion   string `json:"politicas_version"`
 }
 
 // noRegistradaBody is what the agent gets for a number nobody knows: it is an answer
@@ -151,12 +159,21 @@ func quienEscribe(datos Datos) http.HandlerFunc {
 				return
 			}
 			if esTendero {
+				aceptadas, err := datos.PoliticasAceptadas(r.Context(), whatsapp, VersionPoliticas)
+				if err != nil {
+					api.Fail(w, api.Errorf(api.CodeInterno, "No se pudo leer quién escribe."))
+
+					return
+				}
 				api.JSON(w, http.StatusOK, tenderoBody{
-					Rol:              "tendero",
-					TiendaID:         tendero.TiendaID,
-					NombreTienda:     tendero.NombreTienda,
-					Nombre:           tendero.Nombre,
-					EfectivoLibreCOP: tendero.EfectivoLibre,
+					EstadoTienda:       tendero.Estado,
+					PoliticasAceptadas: aceptadas,
+					PoliticasVersion:   VersionPoliticas,
+					Rol:                "tendero",
+					TiendaID:           tendero.TiendaID,
+					NombreTienda:       tendero.NombreTienda,
+					Nombre:             tendero.Nombre,
+					EfectivoLibreCOP:   tendero.EfectivoLibre,
 				})
 
 				return
