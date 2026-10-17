@@ -73,6 +73,19 @@ type Internal struct {
 	Token string
 }
 
+// Panel holds the settings of the control panel surface (/admin).
+type Panel struct {
+	// Origenes is PANEL_ORIGINS, comma separated: the exact origins CORS allows.
+	Origenes []string
+
+	// Claves are PANEL_CLAVE_SUPERADMIN, PANEL_CLAVE_CUMPLIMIENTO and
+	// PANEL_CLAVE_SOPORTE, by role. A role without a password gets no user.
+	Claves map[string]string
+
+	// AgenteURL is AGENTE_URL: where the agent receives notices for people.
+	AgenteURL string
+}
+
 // Verifik holds the settings of the civil registry provider.
 type Verifik struct {
 	// Token is VERIFIK_TOKEN, the bearer token of the cédula query. It carries a
@@ -155,6 +168,7 @@ type Config struct {
 	Internal Internal
 	Verifik  Verifik
 	Didit    Didit
+	Panel    Panel
 }
 
 // Load reads the environment and validates it. When a value cannot be used it
@@ -208,6 +222,15 @@ func Load() (Config, error) {
 		},
 		Internal: Internal{
 			Token: strings.TrimSpace(os.Getenv("SERVICIO_TOKEN")),
+		},
+		Panel: Panel{
+			Origenes:  listaDe(os.Getenv("PANEL_ORIGINS")),
+			AgenteURL: strings.TrimSpace(os.Getenv("AGENTE_URL")),
+			Claves: map[string]string{
+				"superadmin":   strings.TrimSpace(os.Getenv("PANEL_CLAVE_SUPERADMIN")),
+				"cumplimiento": strings.TrimSpace(os.Getenv("PANEL_CLAVE_CUMPLIMIENTO")),
+				"soporte":      strings.TrimSpace(os.Getenv("PANEL_CLAVE_SOPORTE")),
+			},
 		},
 		Verifik: Verifik{
 			Token: strings.TrimSpace(os.Getenv("VERIFIK_TOKEN")),
@@ -270,4 +293,16 @@ func (l Level) Slog() slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+// listaDe splits a comma separated variable, dropping blanks and trailing slashes.
+func listaDe(raw string) []string {
+	var lista []string
+	for _, valor := range strings.Split(raw, ",") {
+		if valor = strings.TrimSuffix(strings.TrimSpace(valor), "/"); valor != "" {
+			lista = append(lista, valor)
+		}
+	}
+
+	return lista
 }

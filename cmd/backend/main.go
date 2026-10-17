@@ -146,6 +146,11 @@ func run() error {
 			}
 
 			deps.Saldos = database
+			if panel, err := nuevoPanel(ctx, cfg, database, deps.Billeteras); err == nil {
+				mounts = append(mounts, panel.Register)
+			} else {
+				slog.Warn("the control panel surface is off", "error", err)
+			}
 			mapa.Register(internal, database)
 			pagos.Register(internal, database)
 			identidad.Register(internal, deps)
