@@ -48,6 +48,9 @@ type Datos interface {
 	ActualizarToken(ctx context.Context, personaID, token, manageURL string, vence time.Time) error
 	SumarUsado(ctx context.Context, personaID string, debito float64) error
 	RegistrarMovimiento(ctx context.Context, id, wallet, tipo string, monto int64, referencia string) error
+	ConfirmarEntrega(ctx context.Context, confirmacionID, reservaID, parte string, recibido bool, texto, alertaID string) (store.Entrega, error)
+	CancelarReserva(ctx context.Context, reservaID, motivo string) error
+	ReservasActivasDeTienda(ctx context.Context, tiendaID string) ([]store.ReservaActiva, error)
 }
 
 // OpenPayments is the authenticated client of the withdrawal (internal/opclient).

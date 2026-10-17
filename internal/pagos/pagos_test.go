@@ -138,6 +138,37 @@ func (m *memoria) RegistrarMovimiento(_ context.Context, _, wallet, tipo string,
 	return nil
 }
 
+func (m *memoria) ConfirmarEntrega(_ context.Context, _, _, parte string, recibido bool, _, _ string) (store.Entrega, error) {
+	if m.reserva.Estado != "pagada" {
+		return store.Entrega{}, store.ErrReservaEnOtroEstado{Estado: m.reserva.Estado}
+	}
+	ahora := time.Now()
+	if parte == "cliente" && !recibido {
+		m.reserva.Estado = "en_disputa"
+		return store.Entrega{Estado: "en_disputa"}, nil
+	}
+	if parte == "tendero" {
+		m.reserva.EntregaTenderoEn = &ahora
+	} else {
+		m.reserva.RecibidoClienteEn = &ahora
+	}
+	if m.reserva.EntregaTenderoEn != nil && m.reserva.RecibidoClienteEn != nil {
+		m.reserva.Estado = "entregada"
+	}
+	return store.Entrega{Estado: m.reserva.Estado, FaltaTendero: m.reserva.EntregaTenderoEn == nil,
+		FaltaCliente: m.reserva.RecibidoClienteEn == nil}, nil
+}
+func (m *memoria) CancelarReserva(context.Context, string, string) error {
+	if m.reserva.Estado != "reservada" || m.reserva.OutgoingPaymentID != nil {
+		return store.ErrReservaEnOtroEstado{Estado: m.reserva.Estado}
+	}
+	m.reserva.Estado = "cancelada"
+	return nil
+}
+func (m *memoria) ReservasActivasDeTienda(context.Context, string) ([]store.ReservaActiva, error) {
+	return []store.ReservaActiva{{ID: m.reserva.ID, Estado: m.reserva.Estado, MontoCOP: m.reserva.MontoCOP, Cliente: "Cristian"}}, nil
+}
+
 // openPaymentsFalso answers like Rafiki did in the live withdrawal (cmd/retiro).
 type openPaymentsFalso struct {
 	pagos   int
@@ -327,6 +358,21 @@ func TestElRetiroSePagaDePuntaAPuntaConOpenPayments(t *testing.T) {
 	if _, body := e.pedir(t, http.MethodGet, "/pagos/cobros/estado?url="+walletTienda+"/incoming-payments/1", ""); body["completado"] != true || body["recibido"] != float64(203_600) {
 		t.Fatalf("estado del cobro = %v", body)
 	}
+
+	// 7.6 and 7.7: the delivery, confirmed by both parties.
+	e.datos.reserva.Codigo = "4821"
+	if status, body := e.pedir(t, http.MethodPost, "/caja/reservas/res_1/cancelar", `{"motivo":"ya no lo necesito"}`); status != http.StatusConflict {
+		t.Fatalf("a paid reservation cannot be cancelled: %d %v", status, body)
+	}
+	if status, body := e.pedir(t, http.MethodPost, "/caja/reservas/res_1/entrega-tendero", `{"codigo":"1111"}`); status != http.StatusConflict || codigo(body) != "CODIGO_INCORRECTO" {
+		t.Fatalf("a wrong code = %d %v", status, body)
+	}
+	if _, body := e.pedir(t, http.MethodPost, "/caja/reservas/res_1/entrega-tendero", `{"codigo":"4821"}`); body["estado"] != "pagada" || body["falta_confirmacion_cliente"] != true {
+		t.Fatalf("the storekeeper's side = %v", body)
+	}
+	if _, body := e.pedir(t, http.MethodPost, "/caja/reservas/res_1/recibido-cliente", `{"recibido":true,"texto_usuario":"sí, recibí"}`); body["estado"] != "entregada" {
+		t.Fatalf("both confirmed = %v", body)
+	}
 }
 
 func TestSinSaldoNoSeCreaNingunPago(t *testing.T) {
@@ -343,6 +389,19 @@ func TestSinSaldoNoSeCreaNingunPago(t *testing.T) {
 	status, body := e.pedir(t, http.MethodPost, "/pagos/pagos", `{"reserva_id":"res_1"}`)
 	if status != http.StatusConflict || codigo(body) != "SALDO_INSUFICIENTE" || e.op.pagos != 0 {
 		t.Fatalf("without balance = %d %v, payments %d", status, body, e.op.pagos)
+	}
+}
+
+func TestCancelarDevuelveLaReservaYUnaEntregaSinPagoNoSeConfirma(t *testing.T) {
+	e := nuevoEscenario(t)
+	if status, _ := e.pedir(t, http.MethodPost, "/caja/reservas/res_1/entrega-tendero", `{"codigo":"0000"}`); status != http.StatusConflict {
+		t.Fatalf("delivering an unpaid reservation = %d", status)
+	}
+	if _, body := e.pedir(t, http.MethodPost, "/caja/reservas/res_1/cancelar", `{"motivo":"la persona se arrepintió"}`); body["ok"] != true || e.datos.reserva.Estado != "cancelada" {
+		t.Fatalf("cancel = %v", body)
+	}
+	if _, body := e.pedir(t, http.MethodGet, "/caja/tiendas/tie_magno/reservas", ""); len(body["reservas"].([]any)) != 1 {
+		t.Fatalf("store reservations = %v", body)
 	}
 }
 

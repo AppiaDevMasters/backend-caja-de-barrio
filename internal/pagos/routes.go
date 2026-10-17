@@ -25,6 +25,10 @@ func Register(server *api.Server, deps Dependencias) {
 	server.Handle("GET /pagos/saldo", saldo(deps.Datos))
 	server.Handle("GET /caja/reservas/{id}", consultarReserva(deps))
 	server.Handle("POST /caja/reservas/{id}/riesgo", evaluarRiesgo(deps))
+	server.Handle("POST /caja/reservas/{id}/cancelar", cancelar(deps))
+	server.Handle("POST /caja/reservas/{id}/entrega-tendero", entregaTendero(deps))
+	server.Handle("POST /caja/reservas/{id}/recibido-cliente", recibidoCliente(deps))
+	server.Handle("GET /caja/tiendas/{tienda_id}/reservas", reservasDeTienda(deps))
 	if deps.OpenPayments == nil {
 		return
 	}
