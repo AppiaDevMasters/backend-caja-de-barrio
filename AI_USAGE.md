@@ -86,3 +86,13 @@ propia sesion y con commits a su nombre. Como en el resto del repositorio:
   `deploy/llaves.env` y `rafiki/.env` del servidor. Nunca pasaron por el chat ni por git.
 
 Los prompts de esa sesion, textuales, estan en `prompts/02-` a `prompts/05-`.
+
+### Modo testnet (rama `feat/modo-testnet`)
+
+En la misma sesion, Claude Code agrego el modo `OP_MODO=testnet` para la demo de
+interoperabilidad: el retiro corre contra wallets del testnet de Interledger, con un
+pago entre monedas (USD a COP), sin tocar el modo propio. Archivos:
+`internal/config`, `internal/opclient/unico.go`, `internal/pagos/{pagos,cupos,retiro,testnet}.go`,
+`cmd/backend/pagos.go`, `cmd/retiro/testnet.go` y `docs/modo-testnet.md`. Las pruebas del
+modo propio no cambiaron; las del testnet usan los mismos dobles. El prompt textual esta
+en `prompts/06-modo-testnet.md`.
