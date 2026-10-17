@@ -126,3 +126,39 @@ func TestDepositAssetLiquidityFailsWhenRafikiReportsNoSuccess(t *testing.T) {
 		t.Fatal("DepositAssetLiquidity() ignored success false, want an error")
 	}
 }
+
+const outgoingPaymentLiquidityReply = `{"data":{"depositOutgoingPaymentLiquidity":{"success":true}}}`
+
+// In the local trial the client's wallet lives at this same ASE, so the account that pays has no
+// balance and Rafiki parks the payment in FUNDING. Funding the payment is what the client's real
+// wallet already does in the demo.
+func TestDepositOutgoingPaymentLiquiditySendsThePayment(t *testing.T) {
+	srv, asked := adminStub(t, outgoingPaymentLiquidityReply)
+
+	if err := newTestClient(t, srv.URL).DepositOutgoingPaymentLiquidity(context.Background(), "pago-1"); err != nil {
+		t.Fatalf("DepositOutgoingPaymentLiquidity() returned an error: %v", err)
+	}
+
+	requests := asked()
+	requireRequests(t, requests, 1)
+	if !strings.Contains(requests[0].Query, "depositOutgoingPaymentLiquidity") {
+		t.Errorf("query = %q, want a depositOutgoingPaymentLiquidity mutation", requests[0].Query)
+	}
+
+	input := inputOf(t, requests[0])
+	if input["outgoingPaymentId"] != "pago-1" {
+		t.Errorf("input outgoingPaymentId = %v, want pago-1", input["outgoingPaymentId"])
+	}
+	// Tied to the payment, so running the trial again funds it once and never twice.
+	if input["idempotencyKey"] != "retiro:fondear:pago-1" {
+		t.Errorf("input idempotencyKey = %v, want retiro:fondear:pago-1", input["idempotencyKey"])
+	}
+}
+
+func TestDepositOutgoingPaymentLiquidityFailsWhenRafikiReportsNoSuccess(t *testing.T) {
+	srv, _ := adminStub(t, `{"data":{"depositOutgoingPaymentLiquidity":{"success":false}}}`)
+
+	if err := newTestClient(t, srv.URL).DepositOutgoingPaymentLiquidity(context.Background(), "pago-1"); err == nil {
+		t.Fatal("DepositOutgoingPaymentLiquidity() ignored success false, want an error")
+	}
+}

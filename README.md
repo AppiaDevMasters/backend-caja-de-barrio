@@ -32,7 +32,7 @@ todavía no existen. El detalle está en
 | `internal/rafikiadmin` — cliente de la Admin API (firma HMAC, GraphQL) | Listo |
 | `internal/opkeys` — clave Ed25519 del cliente y su `kid` (huella RFC 7638) | Listo |
 | `internal/opclient` — el flujo del retiro con el SDK oficial de Go | Listo, con **92 pruebas**, y **ejercitado contra el Rafiki local** desde `cmd/retiro` |
-| `cmd/retiro` — un retiro completo contra el stack, para ver el dinero moverse | Los pasos 1 a 4 verificados **en vivo**; los 5 a 7 en verificación (ver [Cómo hacer un intercambio](#cómo-hacer-un-intercambio)) |
+| `cmd/retiro` — un retiro completo contra el stack, para ver el dinero moverse | **Verificado de punta a punta en vivo**, incluidos los dos pagos y el cobro recibido (ver [Cómo hacer un intercambio](#cómo-hacer-un-intercambio)) |
 | `internal/store` — conexión, migraciones y las 11 tablas del contrato (PostGIS) | Listo y **verificado contra un PostGIS real** |
 | `internal/caja` — las reglas de dinero (comisión, topes, niveles) | Listo, anclado en el ejemplo del contrato |
 | `internal/mapa` — cercanas por distancia, detalle y efectivo del día | Rutas y consultas listas, probadas; **no montadas en el stack** |
@@ -40,7 +40,7 @@ todavía no existen. El detalle está en
 | `internal/api` — la superficie `/internal`, el token y el sobre de errores | Listo (lo construyó la otra sesión del mismo árbol) |
 | Rutas de pagos `/internal/pagos/*` y `POST /caja/reservas` | **No existen todavía** |
 | Servicio `db` con PostGIS en el compose | **No existe todavía** |
-| Retiro de punta a punta contra Rafiki | **Pendiente**: es el primer contacto real del camino del dinero |
+| Retiro de punta a punta contra Rafiki | **Verificado en vivo**: los dos pagos se liquidan y la tienda recibe el efectivo |
 
 ## Arquitectura
 
@@ -230,8 +230,8 @@ docker compose down --volumes     # borra Postgres; después: ./scripts/init.sh 
 
 ```bash
 cd rafiki
-docker compose exec -T backend retiro               # 10.000 COP, el monto de la prueba del contrato
-docker compose exec -T backend retiro -monto 25000  # otro monto, en pesos enteros
+docker compose exec -T backend retiro -fondear  # ensayo local intra-ASE; 10.000 COP por defecto
+docker compose exec -T backend retiro -fondear -monto 25000  # otro monto, en pesos enteros
 ```
 
 Corre **dentro de la red de compose** porque no hay alternativa: las wallet addresses y el
@@ -257,14 +257,13 @@ el grant interactivo, la aprobación con su **hash verificado**, la espera del *
 (obligatoria antes de continuar un grant: `WAIT_SECONDS`, cinco por defecto, y el servidor contesta
 `400 continued grant faster than "wait" period` si se adelanta) y el **token aprobado**.
 
-El **paso 7** se completó hasta sus pagos: los **dos pagos se crearon** y el token **rotó** —el octavo
-defecto, el host público de la URL de gestión, quedó corregido—. Lo que falta es la **liquidación**:
-los dos pagos quedan en estado **`FUNDING`**, sin intentos y sin error, porque Rafiki no puede
-fondearlos desde la cuenta del cliente, y en el stack local esa cuenta **no tiene saldo**. Es el
-mismo hallazgo que ya estaba en la bitácora: la liquidez del activo no es saldo de una wallet
-address, el saldo aparece recién cuando un pago entrante real la acredita. En la demo de verdad la
-wallet del cliente vive en la **test wallet**, que sí tiene fondos, y nuestro ASE es el que recibe;
-así que esta parada es una propiedad de la **topología del ensayo local**, no del código.
+El **paso 7** y la liquidación están verificados en vivo. Los **dos pagos se crearon**, el token
+**rotó** —el octavo defecto, el host público de la URL de gestión, quedó corregido— y el conductor
+adelantó explícitamente la liquidez con `-fondear`, porque el ensayo local pone la wallet del cliente
+y al receptor en el mismo ASE. Después de ese adelanto, Rafiki liquidó ambos pagos y la tienda
+recibió `1.100.000` unidades mínimas, es decir, **11.000 COP** (`10.000` del retiro más `1.000`
+de comisión del tendero). La bandera existe sólo para este ensayo: la demo real usa una test wallet
+con saldo y el producto nunca fondea pagos de clientes.
 
 **Ocho defectos reales encontró esta iteración**, todos en las **costuras** entre piezas y ninguno
 visible con pruebas contra dobles. Los tres primeros son los que más vale la pena conocer:

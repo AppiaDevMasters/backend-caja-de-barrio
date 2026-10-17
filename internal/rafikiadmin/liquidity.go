@@ -12,6 +12,8 @@ const (
 	assetQuery = `query Asset($id: String!) { asset(id: $id) { id code scale liquidity } }`
 
 	depositAssetLiquidityMutation = `mutation DepositAssetLiquidity($input: DepositAssetLiquidityInput!) { depositAssetLiquidity(input: $input) { success } }`
+
+	depositOutgoingPaymentLiquidityMutation = `mutation DepositOutgoingPaymentLiquidity($input: DepositOutgoingPaymentLiquidityInput!) { depositOutgoingPaymentLiquidity(input: $input) { success } }`
 )
 
 // Asset returns one asset of the ASE and says whether the ASE has it.
@@ -100,6 +102,38 @@ func (c *Client) EnsureAssetLiquidity(ctx context.Context, assetID string, targe
 	}
 
 	return missing, nil
+}
+
+// DepositOutgoingPaymentLiquidity funds one outgoing payment.
+//
+// Rafiki parks an outgoing payment in FUNDING when the account that pays cannot cover it. That is
+// exactly what happens in the local trial: the client's wallet lives at this same ASE, so it has no
+// balance, and the ASE ends up on both sides of the payment. Depositing the payment's liquidity is
+// how the ASE advances the money that, in the demo, the client's real wallet already holds.
+//
+// This is NOT part of the product's flow and has no route in the backend. The caja must never fund
+// a client's payment: that would be the caja paying on the client's behalf, with the caja's money.
+// Only the trial conductor asks for it, behind an explicit flag.
+func (c *Client) DepositOutgoingPaymentLiquidity(ctx context.Context, paymentID string) error {
+	input := map[string]any{
+		"outgoingPaymentId": paymentID,
+		// Tied to the payment, so retrying the trial funds a payment once and never twice.
+		"idempotencyKey": "retiro:fondear:" + paymentID,
+	}
+
+	var data struct {
+		DepositOutgoingPaymentLiquidity struct {
+			Success bool `json:"success"`
+		} `json:"depositOutgoingPaymentLiquidity"`
+	}
+	if err := c.Do(ctx, depositOutgoingPaymentLiquidityMutation, map[string]any{"input": input}, &data); err != nil {
+		return err
+	}
+	if !data.DepositOutgoingPaymentLiquidity.Success {
+		return errors.New("rafikiadmin: the Admin API reported the outgoing payment liquidity deposit as unsuccessful")
+	}
+
+	return nil
 }
 
 // uuidV4 returns a random RFC 4122 version 4 UUID, the identifier Rafiki

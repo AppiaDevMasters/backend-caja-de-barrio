@@ -32,6 +32,7 @@ import (
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/caja"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/config"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/opclient"
+	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/rafikiadmin"
 )
 
 // The wallets of the demo, by the name the seed gives them.
@@ -63,6 +64,7 @@ func main() {
 
 func run() error {
 	monto := flag.Int64("monto", 10_000, "monto del retiro en pesos enteros")
+	fondear := flag.Bool("fondear", false, "adelantar la liquidez de los dos pagos desde el ASE; solo para el ensayo local, donde el cliente y el receptor son el mismo ASE")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -201,6 +203,16 @@ func run() error {
 	}
 	fmt.Printf("7. pagos\n   tienda %s\n   plataforma %s\n   token final %s\n", pagos.Store.URL, pagos.Platform.URL, pagos.Token.Value)
 
+	// STEP 6.5, local trial only. The client's wallet lives at this same ASE, so the account that
+	// pays has no balance and Rafiki parks both payments in FUNDING. The real demo never needs
+	// this: there the client's wallet is the test wallet and it already holds funds.
+	if *fondear {
+		if err := fondearPagos(ctx, cfg, pagos); err != nil {
+			return err
+		}
+		fmt.Println("7b. liquidez de los dos pagos adelantada por el ASE (solo ensayo local)")
+	}
+
 	// STEP 7: the money has to be THERE. The collection point of the store has to show the
 	// amount it asked for, or the withdrawal did not happen.
 	recibido, err := esperarCobro(ctx, cobros.Store.URL, *monto+comisiones.Tendero, 20*time.Second)
@@ -211,6 +223,45 @@ func run() error {
 	fmt.Println("\n=== el dinero se movio ===")
 
 	return nil
+}
+
+// fondearPagos brings the liquidity of the two payments up. It exists only for the local trial,
+// which runs with the client's wallet at the very ASE that receives: with nobody on the client's
+// side, the ASE has to put up the money that the client's real wallet already holds in the demo.
+//
+// The product has no such call, on purpose: a caja that funds its clients' payments is a caja
+// paying with its own money.
+func fondearPagos(ctx context.Context, cfg config.Config, pagos opclient.OutgoingPayments) error {
+	admin, err := rafikiadmin.New(rafikiadmin.Config{
+		URL:       cfg.Rafiki.AdminURL,
+		TenantID:  cfg.Rafiki.TenantID,
+		APISecret: cfg.Rafiki.AdminAPISecret,
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, pago := range []opclient.OutgoingPayment{pagos.Store, pagos.Platform} {
+		id, err := idDePago(pago.URL)
+		if err != nil {
+			return err
+		}
+		if err := admin.DepositOutgoingPaymentLiquidity(ctx, id); err != nil {
+			return fmt.Errorf("adelantar la liquidez del pago %s: %w", id, err)
+		}
+	}
+
+	return nil
+}
+
+// idDePago takes the identifier out of an outgoing payment URL, which is its last segment.
+func idDePago(url string) (string, error) {
+	id := url[strings.LastIndex(url, "/")+1:]
+	if id == "" {
+		return "", fmt.Errorf("la URL del pago %q no trae identificador", url)
+	}
+
+	return id, nil
 }
 
 // consentimiento listens for the authorization server to send the user back, which is what

@@ -47,7 +47,7 @@ S10. **Idioma.** Codigo e identificadores en ingles; documentacion del repo y me
 | T9 | S1,S8,S9 | `opclient`: **dos** outgoing payments (tienda y plataforma), verificacion de completado y las pruebas de las invariantes 1 y 4 | `internal/opclient` | — |
 | T10 | S3,S5 | `Dockerfile`, servicio en `docker-compose.yml`, `.env.example` con los nombres de las variables | raiz | — |
 | T11 | S6 | `AI_USAGE.md` y `prompts/` con los prompts reales de esta sesion | raiz | — |
-| T12 | S8,S9 | Verificacion de punta a punta contra el Rafiki local: retiro completo con wallet addresses propias | raiz | — |
+| T12 | S8,S9 | Verificacion de punta a punta contra el Rafiki local: retiro completo con wallet addresses propias | raiz | 2026-10-17: verificado en vivo; commit posterior de documentación |
 
 ## Log
 
@@ -146,3 +146,5 @@ L24 (2026-10-16, handoff de T7-T9 y recepcion del contrato de los MCP; supersede
 2. **El contrato cambio el alcance de T7 y T9, y ya no es una reescritura de host.** El contrato `contexto-caja-de-barrio/contrato-backend.md` (seccion 8.4/8.5) pide **dos** incoming payments y **dos** quotes: la tienda por `monto + comision_tendero` y la app por `comision_plataforma` en `OP_WALLET_PLATAFORMA`. Las dos filas se reescribieron en la tabla. La reescritura de host de L15 sigue sin hacer falta, por L21.
 3. **Superficie nueva y su documento.** El contrato pide una API `/internal` con `X-Servicio-Token`, base PostgreSQL + PostGIS con once tablas, y los proveedores Didit y Verifik. Eso no vive aca: es un plan aparte, [`contrato-interno-y-pagos.md`](contrato-interno-y-pagos.md), con sus specs y diecinueve tareas. Los endpoints del ASE y los del contrato son superficies del mismo binario y no se pisan (el ASE queda en la raiz del router).
 4. **Verificacion viva registrada en este asiento**, para no repetir mediciones viejas: seis servicios de compose healthy; `go test ./...` verde en seis paquetes; asset `COP` escala 2; seis filas de wallet address (tres con host `rafiki-backend:3000`, tres huerfanas con `100.76.141.47:3000`); tabla `webhooks` con una fila, o sea que la entrega real de un evento sigue pendiente y depende de T7, como anticipaban L17, L20 y L22.
+
+L25 (2026-10-17, T12 cerrado en vivo): el conductor `docker compose exec -T backend retiro -fondear` completó una transacción real contra el Rafiki local. Verificado sin dobles: dos incoming payments, dos quotes por `1.110.000` unidades mínimas COP, grant interactivo, callback con hash verificado, espera GNAP, token aprobado, dos outgoing payments con rotación final del token, adelanto explícito de liquidez para el ensayo intra-ASE y liquidación final. El cobro de la tienda reportó `1.100.000` unidades mínimas (`11.000 COP`: `10.000` del retiro + `1.000` de comisión). `-fondear` sólo existe para este ensayo porque cliente y receptor viven en el mismo ASE; el producto no fondea pagos de clientes. T12 queda cerrado.
