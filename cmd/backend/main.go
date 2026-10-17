@@ -10,9 +10,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/api"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/ase"
+	cajaroutes "github.com/AppiaDevMasters/backend-caja-de-barrio/internal/caja/routes"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/config"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/didit"
 	"github.com/AppiaDevMasters/backend-caja-de-barrio/internal/httpserver"
@@ -74,6 +76,7 @@ func run() error {
 		if _, err := database.Migrate(ctx); err != nil {
 			return err
 		}
+		cajaroutes.StartExpiryReleaser(ctx, database, time.Minute, slog.Default())
 
 		// The internal surface needs the token of every call and a data layer for its
 		// routes, so it appears only when both are configured: mounted without a token
@@ -142,6 +145,7 @@ func run() error {
 
 			mapa.Register(internal, database)
 			identidad.Register(internal, deps)
+			cajaroutes.Register(internal, database)
 			mounts = append(mounts, internal.Register)
 		}
 	}

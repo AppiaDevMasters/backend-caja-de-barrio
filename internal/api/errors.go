@@ -19,6 +19,7 @@ const (
 	CodeDatosInvalidos      Code = "DATOS_INVALIDOS"
 	CodeSinPoliticas        Code = "SIN_POLITICAS"
 	CodeSinVerificacion     Code = "SIN_VERIFICACION"
+	CodePersonaNoAprobada   Code = "PERSONA_NO_APROBADA"
 	CodePersonaNoHabilitada Code = "PERSONA_NO_HABILITADA"
 	CodeYaRegistrada        Code = "YA_REGISTRADA"
 	CodeTiendaNoDisponible  Code = "TIENDA_NO_DISPONIBLE"
@@ -63,6 +64,7 @@ var contractCodes = []Code{
 	CodeDatosInvalidos,
 	CodeSinPoliticas,
 	CodeSinVerificacion,
+	CodePersonaNoAprobada,
 	CodePersonaNoHabilitada,
 	CodeYaRegistrada,
 	CodeTiendaNoDisponible,
@@ -116,8 +118,8 @@ func (c Code) Status() int {
 		return http.StatusNotFound
 	case CodeDatosInvalidos, CodeHashInvalido:
 		return http.StatusBadRequest
-	case CodeSinPoliticas, CodeSinVerificacion, CodePersonaNoHabilitada,
-		CodeYaRegistrada, CodeTiendaNoDisponible, CodeTopeExcedido,
+	case CodeSinPoliticas, CodeSinVerificacion, CodePersonaNoAprobada,
+		CodePersonaNoHabilitada, CodeYaRegistrada, CodeTiendaNoDisponible, CodeTopeExcedido,
 		CodeDatosNoCoinciden, CodeEstadoInvalido, CodeCodigoIncorrecto,
 		CodeSinFaceMatch, CodeSinRiesgo, CodeSinAprobacion, CodeSinCupo,
 		CodeCupoExcedido, CodeCotizacionVencida:
