@@ -68,7 +68,13 @@ type ReservarParams struct {
 //   - the store's own row is locked before the cash is read, so two reservations of
 //     the same cash cannot both succeed: the second one waits, reads the cash the
 //     first one already reserved, and is refused.
+// zonaDemo is the zone whose calendar day the cash belongs to. pgx sends a time to a
+// ::date parameter as the day of the time's own location, so a UTC time after 19:00
+// in Bogotá would name tomorrow, a day with no published cash.
+var zonaDemo = time.FixedZone("America/Bogota", -5*60*60)
+
 func (s *Store) Reservar(ctx context.Context, params ReservarParams) (Reserva, error) {
+	dia := params.Ahora.In(zonaDemo)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Reserva{}, fmt.Errorf("store: starting the reservation: %w", err)
@@ -105,7 +111,7 @@ func (s *Store) Reservar(ctx context.Context, params ReservarParams) (Reserva, e
 	err = tx.QueryRow(ctx, `
 		select coalesce(publicado_cop - reservado_cop, 0)
 		from efectivo_disponible
-		where tienda_id = $1 and fecha = $2::date`, params.TiendaID, params.Ahora).
+		where tienda_id = $1 and fecha = $2::date`, params.TiendaID, dia).
 		Scan(&libre)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Reserva{}, fmt.Errorf("store: reading the cash of %s: %w", params.TiendaID, err)
@@ -149,7 +155,7 @@ func (s *Store) Reservar(ctx context.Context, params ReservarParams) (Reserva, e
 		// The day of the cash it took, with the same expression the cash was found
 		// with. Recomputing it later from the timestamp is what a release cannot do
 		// without assuming a timezone.
-		params.Ahora,
+		dia,
 	)
 	if err != nil {
 		return Reserva{}, fmt.Errorf("store: writing the reservation %s: %w", reserva.ID, err)
@@ -161,7 +167,7 @@ func (s *Store) Reservar(ctx context.Context, params ReservarParams) (Reserva, e
 	tag, err := tx.Exec(ctx, `
 		update efectivo_disponible
 		set reservado_cop = reservado_cop + $3
-		where tienda_id = $1 and fecha = $2::date`, params.TiendaID, params.Ahora, params.MontoCOP)
+		where tienda_id = $1 and fecha = $2::date`, params.TiendaID, dia, params.MontoCOP)
 	if err != nil {
 		return Reserva{}, fmt.Errorf("store: reserving the cash of %s: %w", params.TiendaID, err)
 	}
