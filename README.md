@@ -252,15 +252,18 @@ comisión del tendero** (el piso) y **100 de la plataforma**.
 
 ### Hasta dónde está verificado
 
-**Los pasos 1 a 4 están verificados en vivo** contra Rafiki: los dos cobros, las dos cotizaciones,
-el grant interactivo y la aprobación con su **hash verificado**. Los pasos **5 a 7** quedaron en
-verificación al cerrar esta edición, por dos defectos ya corregidos cuya corrida es la que falta:
-el **host público** con el que el servidor de autorización anuncia su `continue` y la gestión del
-token (inalcanzable desde dentro de la red) y el **`wait` de GNAP**, la pausa obligatoria antes de
-continuar un grant (`WAIT_SECONDS`, cinco por defecto, y el servidor contesta `400 continued grant
-faster than "wait" period` si se adelanta). El SDK no expone ese valor, así que hay que esperarlo.
+**Los pasos 1 a 6 están verificados en vivo** contra Rafiki: los dos cobros, las dos cotizaciones,
+el grant interactivo, la aprobación con su **hash verificado**, la espera del **`wait` de GNAP**
+(obligatoria antes de continuar un grant: `WAIT_SECONDS`, cinco por defecto, y el servidor contesta
+`400 continued grant faster than "wait" period` si se adelanta) y el **token aprobado**.
 
-**Siete defectos reales encontró esta iteración**, todos en las **costuras** entre piezas y ninguno
+El **paso 7** —los dos pagos con la rotación y la comprobación de que el dinero llegó— llegó hasta
+su última rotación: los **dos pagos se hicieron** y falló la rotación final, porque la URL de gestión
+que devuelve **cada rotación** vuelve a traer el **host público** de la demo, inalcanzable desde
+dentro de la red. Es el octavo defecto de la lista, y su corrección —reescribir ese host en el
+cliente y no en cada llamada— es la que falta.
+
+**Ocho defectos reales encontró esta iteración**, todos en las **costuras** entre piezas y ninguno
 visible con pruebas contra dobles. Los tres primeros son los que más vale la pena conocer:
 
 | Defecto | Causa |
@@ -272,6 +275,7 @@ visible con pruebas contra dobles. Los tres primeros son los que más vale la pe
 | El hash no verificaba | Se calculaba con el `authServer` del documento, y no con la URL **configurada** del servidor de autorización **más el tenant** |
 | `i/o timeout` al continuar | El `continue` y la gestión del token llegan con el **host público** de la demo |
 | `400 continued grant faster than "wait" period` | GNAP obliga a esperar el **`wait`** del grant antes de continuarlo, y el SDK no expone ese valor |
+| `i/o timeout` al rotar el token | La URL de gestión que devuelve **cada rotación** vuelve a traer el host público: reescribirlo una vez no alcanza |
 
 Y lo que **todavía no** se puede: que el **agente** pida un retiro. Para eso faltan las rutas
 `/internal/pagos/*` (C13 y C14), el servicio `db` con PostGIS en el compose (C16) y
