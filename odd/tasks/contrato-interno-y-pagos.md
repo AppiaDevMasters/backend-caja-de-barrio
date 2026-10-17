@@ -81,7 +81,7 @@ Prerrequisito: T7-T9 (cliente de Open Payments). C1 no depende de ellas y desblo
 | C15 | S9 | Una prueba por invariante de la seccion 9, sobre la interfaz publica y con estado aislado | `internal/api`, `internal/store` | — |
 | C16 | S3,S18 | Compose: servicio `db` PostGIS, migraciones al arrancar y variables por servicio (los MCP solo reciben `BACKEND_URL` y `SERVICIO_TOKEN`) | `rafiki/docker-compose.yml`, `Dockerfile` | 1c19d69 |
 | C17 | S17 | Documentacion: `README.md`, `docs/configuracion.md` y `env.example` con las variables nuevas (`DATABASE_URL`, `SERVICIO_TOKEN`, `VERIFIK_TOKEN`, `DIDIT_*`, `OP_WALLET_PLATAFORMA`) | raiz, `docs/` | — |
-| C18 | — | Respuesta a la seccion 11 del contrato: URL base, tokens por canal privado, paths y campos, wallets finales, prueba minima de pago y configuracion del webhook de Didit | — | — |
+| C18 | — | Respuesta a la seccion 11 del contrato: URL base, tokens por canal privado, paths y campos, wallets finales, prueba minima de pago y configuracion del webhook de Didit | `docs/seccion-11.md`, `README.md` | 8caee4a |
 | C19 | S9,S10 | Verificacion de punta a punta: retiro completo con la wallet del cliente, y la lista de comprobacion de la seccion 11.4 (cliente, tienda y app; y el segundo `POST /pagos` sin segundo cobro) | raiz | — |
 
 ## Log
@@ -390,3 +390,5 @@ L41 (2026-10-17, C16 y T12 verificados; supersede las conclusiones históricas d
 L42 (2026-10-17, trazabilidad de C16): la implementación y su documentación quedaron en el commit de trabajo `1c19d69` (`feat(compose): agregar la base PostGIS del contrato`). Los checks finales pasaron: `git diff --check`, `bash -n rafiki/scripts/init.sh`, build, vet, los 14 paquetes de Go, `docker compose config` y permisos 600 del `.env`. La revisión independiente final no encontró defectos funcionales ni de seguridad después de reconciliar la evidencia histórica y retirar `.codegraph/`; C16 queda lista para entrega.
 
 L43 (2026-10-17, decisión de producto para C10): para `POST /internal/caja/reservas`, cualquier persona cuyo `estado_registro` no sea `aprobada` responde con `PERSONA_NO_APROBADA` y HTTP 409. Se distingue así el registro no aprobado de una persona aprobada cuya verificación Didit está ausente o vencida (`SIN_VERIFICACION`, también 409). Esta decisión se toma porque el contrato no fija el código para `pendiente`, `rechazada` o `bloqueada` y la referencia `simuladas.py` no está disponible.
+
+L45 (2026-10-17, C18 cerrada): `docs/seccion-11.md` responde los cinco puntos de la sección 11 sin exponer secretos. Documenta `BACKEND_URL` dentro de Compose, `X-Servicio-Token` por canal privado, la separación entre la `DATABASE_URL` del contrato y la de Rafiki, las wallets seed, la evidencia real de T12 y los bloqueos honestos de C8/C10/C13/C14/C19. El documento quedó enlazado desde `README.md` y publicado en `8caee4a`; C18 queda cerrada.
