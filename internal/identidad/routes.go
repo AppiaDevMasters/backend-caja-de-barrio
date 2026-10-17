@@ -68,6 +68,13 @@ type Dependencias struct {
 	Datos    Datos
 	Cedulas  Cedulas
 	Carteras Carteras
+
+	// Didit (5.5 to 5.7). Nil Didit leaves the routes mounted, answering that the
+	// provider is not configured. Billeteras may be nil.
+	Didit          Didit
+	Verificaciones Verificaciones
+	ConfigDidit    ConfigDidit
+	Billeteras     Billeteras
 }
 
 // Register adds the identity routes to the surface.
@@ -76,6 +83,9 @@ func Register(server *api.Server, deps Dependencias) {
 	server.Handle("POST /identidad/politicas/aceptaciones", aceptarPoliticas(deps.Datos))
 	server.Handle("POST /identidad/cedulas/verificar", verificarCedula(deps.Cedulas))
 	server.Handle("POST /identidad/personas", crearPersona(deps))
+	server.Handle("POST /identidad/verificaciones", crearVerificacion(deps))
+	server.Handle("GET /identidad/verificaciones/{session_id}", estadoVerificacion(deps))
+	server.Handle("POST /identidad/webhooks/didit", webhookDidit(deps))
 }
 
 // quienEscribeBody is the answer of 5.1 for the person the number belongs to.
