@@ -44,7 +44,15 @@ fi
 
 paso "Dominio"
 ip="${IP_PUBLICA:-$(curl -fsS https://api.ipify.org)}"
-dominio="${DOMINIO:-$(echo "$ip" | tr '.' '-').sslip.io}"
+# Orden: DOMINIO del entorno, el que ya quedó guardado en rafiki/.env (para que una
+# reinstalación no lo cambie sin querer) y, si no hay ninguno, <ip-con-guiones>.sslip.io.
+dominio_guardado="$( [ -f "$env_rafiki" ] && env_val DOMINIO || true )"
+dominio="${DOMINIO:-${dominio_guardado:-$(echo "$ip" | tr '.' '-').sslip.io}}"
+if [ -n "$dominio_guardado" ] && [ "$dominio" != "$dominio_guardado" ]; then
+  echo "El dominio cambia de $dominio_guardado a $dominio: Rafiki guarda el dominio en su base," >&2
+  echo "así que hay que empezar de cero (ver 'Cambiar de dominio' en deploy/README.md)." >&2
+  exit 1
+fi
 echo "IP pública: $ip"
 echo "Dominio:    $dominio"
 
@@ -64,6 +72,12 @@ fi
 clave_admin="$(sed -n 's/^clave=//p' "$credenciales")"
 hash_admin="$(docker run --rm caddy:2.8-alpine caddy hash-password --plaintext "$clave_admin")"
 
+# Secretos del producto: se generan una vez y se conservan entre corridas (la base ya
+# tiene esa clave y los MCP ya tienen ese token).
+db_password="$(env_val CAJA_DB_PASSWORD)"; db_password="${db_password:-$(openssl rand -hex 24)}"
+servicio_token="$(env_val SERVICIO_TOKEN)"; servicio_token="${servicio_token:-$(openssl rand -hex 32)}"
+verifik_token="${VERIFIK_TOKEN:-$(env_val VERIFIK_TOKEN)}"
+
 # Bloque del VPS al final de rafiki/.env, reescrito en cada corrida. El hash va entre
 # comillas simples para que Compose no interprete sus `$`.
 sed -i '/^# --- VPS (deploy\/instalar.sh) ---$/,$d' "$env_rafiki"
@@ -72,6 +86,9 @@ cat >>"$env_rafiki" <<EOF
 DOMINIO=$dominio
 ADMIN_UI_USUARIO=admin
 ADMIN_UI_HASH='$hash_admin'
+CAJA_DB_PASSWORD=$db_password
+SERVICIO_TOKEN=$servicio_token
+VERIFIK_TOKEN=$verifik_token
 EOF
 
 paso "Directorio de la clave del cliente Open Payments"
@@ -107,6 +124,16 @@ docker run --rm \
 
 paso "Reiniciando el backend para que cargue la clave del cliente"
 "${compose[@]}" restart backend
+for _ in $(seq 1 30); do
+  estado="$(docker inspect -f '{{.State.Health.Status}}' caja-de-barrio-backend 2>/dev/null || true)"
+  [ "$estado" = healthy ] && break
+  sleep 3
+done
+[ "$estado" = healthy ] || { echo "el backend no quedó sano; revisa: docker logs caja-de-barrio-backend" >&2; exit 1; }
+
+paso "Datos del demo (tiendas, clientas y efectivo de hoy y mañana)"
+# Corre después de que el backend aplicó sus migraciones al arrancar.
+docker exec -i caja-de-barrio-db psql -q -v ON_ERROR_STOP=1 -v base="https://op.$dominio"   -U caja -d caja_de_barrio <deploy/semilla-demo.sql
 
 paso "Verificación"
 sleep 5
@@ -115,6 +142,9 @@ for url in "https://backend.$dominio/health" "https://backend.$dominio/rates?bas
   curl -fsS --retry 10 --retry-delay 3 --retry-all-errors "$url" || echo "FALLÓ"
   echo
 done
+printf '%-55s ' "https://backend.$dominio/internal (con token)"
+curl -fsS -H "X-Servicio-Token: $servicio_token" "https://backend.$dominio/internal/identidad/personas?whatsapp=573000000001" || echo "FALLÓ"
+echo
 printf '%-55s ' "https://op.$dominio/app-cajadebarrio"
 curl -fsS --retry 5 --retry-delay 3 -H 'Accept: application/json' "https://op.$dominio/app-cajadebarrio" | head -c 300 || echo "FALLÓ"
 echo
@@ -132,6 +162,8 @@ Wallet addresses del demo:
   https://op.$dominio/tienda-cajadebarrio
   https://op.$dominio/laura-cajadebarrio
   https://op.$dominio/app-cajadebarrio
+
+El SERVICIO_TOKEN de los MCP está en rafiki/.env (no se imprime aquí).
 
 Para actualizar después de un git pull:  sudo ./deploy/instalar.sh
 EOF
