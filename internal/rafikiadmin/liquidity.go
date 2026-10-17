@@ -14,7 +14,35 @@ const (
 	depositAssetLiquidityMutation = `mutation DepositAssetLiquidity($input: DepositAssetLiquidityInput!) { depositAssetLiquidity(input: $input) { success } }`
 
 	depositOutgoingPaymentLiquidityMutation = `mutation DepositOutgoingPaymentLiquidity($input: DepositOutgoingPaymentLiquidityInput!) { depositOutgoingPaymentLiquidity(input: $input) { success } }`
+
+	withdrawIncomingPaymentLiquidityMutation = `mutation WithdrawIncomingPaymentLiquidity($input: WithdrawIncomingPaymentLiquidityInput!) { withdrawIncomingPaymentLiquidity(input: $input) { success } }`
 )
+
+// WithdrawIncomingPaymentLiquidity takes out of Rafiki the money a completed incoming
+// payment received. Rafiki moves money and does not keep balances: the ASE withdraws
+// what arrived and credits it in its own ledger (the virtual wallet), which is the
+// accounting cycle Rafiki expects. The key is tied to the payment, so a retry
+// withdraws once.
+func (c *Client) WithdrawIncomingPaymentLiquidity(ctx context.Context, paymentID string) error {
+	input := map[string]any{
+		"incomingPaymentId": paymentID,
+		"idempotencyKey":    "cobro:retirar:" + paymentID,
+	}
+
+	var data struct {
+		WithdrawIncomingPaymentLiquidity struct {
+			Success bool `json:"success"`
+		} `json:"withdrawIncomingPaymentLiquidity"`
+	}
+	if err := c.Do(ctx, withdrawIncomingPaymentLiquidityMutation, map[string]any{"input": input}, &data); err != nil {
+		return err
+	}
+	if !data.WithdrawIncomingPaymentLiquidity.Success {
+		return errors.New("rafikiadmin: the Admin API reported the incoming payment liquidity withdrawal as unsuccessful")
+	}
+
+	return nil
+}
 
 // Asset returns one asset of the ASE and says whether the ASE has it.
 func (c *Client) Asset(ctx context.Context, id string) (Asset, bool, error) {
@@ -111,9 +139,9 @@ func (c *Client) EnsureAssetLiquidity(ctx context.Context, assetID string, targe
 // balance, and the ASE ends up on both sides of the payment. Depositing the payment's liquidity is
 // how the ASE advances the money that, in the demo, the client's real wallet already holds.
 //
-// This is NOT part of the product's flow and has no route in the backend. The caja must never fund
-// a client's payment: that would be the caja paying on the client's behalf, with the caja's money.
-// Only the trial conductor asks for it, behind an explicit flag.
+// The product calls it only for a client wallet of this same ASE, and only after debiting that
+// client's virtual wallet for the payment (internal/pagos): the ASE moves the client's own money,
+// never the caja's. The trial conductor calls it behind its explicit -fondear flag.
 func (c *Client) DepositOutgoingPaymentLiquidity(ctx context.Context, paymentID string) error {
 	input := map[string]any{
 		"outgoingPaymentId": paymentID,
